@@ -1,0 +1,641 @@
+from gamegrid import *
+from java.awt import Color
+from random import randint
+
+B = 20      # Spielfeld-Breite in Feldern
+H = 20      # Spielfeld-Hoehe in Feldern
+Z = 28      # Groesse eines Feldes in Pixeln
+
+def neuesSpiel():
+    global schlange, richtung, naechste, apfel, punkte, lebt
+    schlange = [(10, 10), (9, 10), (8, 10)]
+    richtung = (1, 0)
+    naechste = richtung
+    punkte = 0
+    lebt = True
+    neuerApfel()
+
+def neuerApfel():
+    global apfel
+    while True:
+        a = (randint(0, B - 1), randint(0, H - 1))
+        if a not in schlange:
+            apfel = a
+            return
+
+def taste(e):
+    global naechste
+    code = e.getKeyCode()
+    # Pfeiltasten oder WASD
+    if code in (37, 65) and richtung != (1, 0):
+        naechste = (-1, 0)
+    elif code in (39, 68) and richtung != (-1, 0):
+        naechste = (1, 0)
+    elif code in (38, 87) and richtung != (0, 1):
+        naechste = (0, -1)
+    elif code in (40, 83) and richtung != (0, -1):
+        naechste = (0, 1)
+    elif code == 82 and not lebt:   # R = Neustart
+        neuesSpiel()
+
+def schritt():
+    global richtung, punkte, lebt
+    richtung = naechste
+    kopf = (schlange[0][0] + richtung[0], schlange[0][1] + richtung[1])
+    # Wand oder eigener Koerper getroffen?
+    if kopf[0] < 0 or kopf[0] >= B or kopf[1] < 0 or kopf[1] >= H \
+       or kopf in schlange[:-1]:
+        lebt = False
+        return
+    schlange.insert(0, kopf)
+    if kopf == apfel:
+        punkte += 1
+        neuerApfel()
+    else:
+        schlange.pop()
+
+def zeichnen():
+    bg = getBg()
+    bg.clear(Color.black)
+    bg.fillCell(Location(apfel[0], apfel[1]), Color.red)
+    for i in range(len(schlange)):
+        x, y = schlange[i]
+        if i == 0:
+            bg.fillCell(Location(x, y), Color.yellow)
+        else:
+            bg.fillCell(Location(x, y), Color.green)
+    if lebt:
+        setTitle("Snake - Punkte: " + str(punkte))
+    else:
+        setTitle("GAME OVER - Punkte: " + str(punkte) + " - R = Neustart")
+
+makeGameGrid(B, H, Z, None, None, False, keyPressed = taste)
+show()
+neuesSpiel()
+
+while not isDisposed():
+    if lebt:
+        schritt()
+    zeichnen()
+    refresh()
+    delay(max(60, 150 - punkte * 4))   # wird mit jedem Apfel schnellerfrom gamegrid import *
+from java.awt import Color
+from random import randint
+
+B = 20      # Spielfeld-Breite in Feldern
+H = 20      # Spielfeld-Hoehe in Feldern
+Z = 28      # Groesse eines Feldes in Pixeln
+
+def neuesSpiel():
+    global schlange, richtung, naechste, apfel, punkte, lebt
+    schlange = [(10, 10), (9, 10), (8, 10)]
+    richtung = (1, 0)
+    naechste = richtung
+    punkte = 0
+    lebt = True
+    neuerApfel()
+
+def neuerApfel():
+    global apfel
+    while True:
+        a = (randint(0, B - 1), randint(0, H - 1))
+        if a not in schlange:
+            apfel = a
+            return
+
+def taste(e):
+    global naechste
+    code = e.getKeyCode()
+    # Pfeiltasten oder WASD
+    if code in (37, 65) and richtung != (1, 0):
+        naechste = (-1, 0)
+    elif code in (39, 68) and richtung != (-1, 0):
+        naechste = (1, 0)
+    elif code in (38, 87) and richtung != (0, 1):
+        naechste = (0, -1)
+    elif code in (40, 83) and richtung != (0, -1):
+        naechste = (0, 1)
+    elif code == 82 and not lebt:   # R = Neustart
+        neuesSpiel()
+
+def schritt():
+    global richtung, punkte, lebt
+    richtung = naechste
+    kopf = (schlange[0][0] + richtung[0], schlange[0][1] + richtung[1])
+    # Wand oder eigener Koerper getroffen?
+    if kopf[0] < 0 or kopf[0] >= B or kopf[1] < 0 or kopf[1] >= H \
+       or kopf in schlange[:-1]:
+        lebt = False
+        return
+    schlange.insert(0, kopf)
+    if kopf == apfel:
+        punkte += 1
+        neuerApfel()
+    else:
+        schlange.pop()
+
+def zeichnen():
+    bg = getBg()
+    bg.clear(Color.black)
+    bg.fillCell(Location(apfel[0], apfel[1]), Color.red)
+    for i in range(len(schlange)):
+        x, y = schlange[i]
+        if i == 0:
+            bg.fillCell(Location(x, y), Color.yellow)
+        else:
+            bg.fillCell(Location(x, y), Color.green)
+    if lebt:
+        setTitle("Snake - Punkte: " + str(punkte))
+    else:
+        setTitle("GAME OVER - Punkte: " + str(punkte) + " - R = Neustart")
+
+makeGameGrid(B, H, Z, None, Color.black, False, keyPressed = taste)
+show()
+neuesSpiel()
+
+while not isDisposed():
+    if lebt:
+        schritt()
+    zeichnen()
+    refresh()
+    delay(max(60, 150 - punkte * 4))   # wird mit jedem Apfel schnellerfrom gamegrid import *
+from java.awt import Color
+from random import randint
+
+B = 20      # Spielfeld-Breite in Feldern
+H = 20      # Spielfeld-Hoehe in Feldern
+Z = 28      # Groesse eines Feldes in Pixeln
+
+def neuesSpiel():
+    global schlange, richtung, naechste, apfel, punkte, lebt
+    schlange = [(10, 10), (9, 10), (8, 10)]
+    richtung = (1, 0)
+    naechste = richtung
+    punkte = 0
+    lebt = True
+    neuerApfel()
+
+def neuerApfel():
+    global apfel
+    while True:
+        a = (randint(0, B - 1), randint(0, H - 1))
+        if a not in schlange:
+            apfel = a
+            return
+
+def taste(e):
+    global naechste
+    code = e.getKeyCode()
+    # Pfeiltasten oder WASD
+    if code in (37, 65) and richtung != (1, 0):
+        naechste = (-1, 0)
+    elif code in (39, 68) and richtung != (-1, 0):
+        naechste = (1, 0)
+    elif code in (38, 87) and richtung != (0, 1):
+        naechste = (0, -1)
+    elif code in (40, 83) and richtung != (0, -1):
+        naechste = (0, 1)
+    elif code == 82 and not lebt:   # R = Neustart
+        neuesSpiel()
+
+def schritt():
+    global richtung, punkte, lebt
+    richtung = naechste
+    kopf = (schlange[0][0] + richtung[0], schlange[0][1] + richtung[1])
+    # Wand oder eigener Koerper getroffen?
+    if kopf[0] < 0 or kopf[0] >= B or kopf[1] < 0 or kopf[1] >= H \
+       or kopf in schlange[:-1]:
+        lebt = False
+        return
+    schlange.insert(0, kopf)
+    if kopf == apfel:
+        punkte += 1
+        neuerApfel()
+    else:
+        schlange.pop()
+
+def zeichnen():
+    bg = getBg()
+    bg.clear(Color.black)
+    bg.fillCell(Location(apfel[0], apfel[1]), Color.red)
+    for i in range(len(schlange)):
+        x, y = schlange[i]
+        if i == 0:
+            bg.fillCell(Location(x, y), Color.yellow)
+        else:
+            bg.fillCell(Location(x, y), Color.green)
+    if lebt:
+        setTitle("Snake - Punkte: " + str(punkte))
+    else:
+        setTitle("GAME OVER - Punkte: " + str(punkte) + " - R = Neustart")
+
+makeGameGrid(B, H, Z, None, Color.black, False, keyPressed = taste)
+show()
+neuesSpiel()
+
+while not isDisposed():
+    if lebt:
+        schritt()
+    zeichnen()
+    refresh()
+    delay(max(60, 150 - punkte * 4))   # wird mit jedem Apfel schnellerfrom gamegrid import *
+from java.awt import Color
+from random import randint
+
+B = 20      # Spielfeld-Breite in Feldern
+H = 20      # Spielfeld-Hoehe in Feldern
+Z = 28      # Groesse eines Feldes in Pixeln
+
+def neuesSpiel():
+    global schlange, richtung, naechste, apfel, punkte, lebt
+    schlange = [(10, 10), (9, 10), (8, 10)]
+    richtung = (1, 0)
+    naechste = richtung
+    punkte = 0
+    lebt = True
+    neuerApfel()
+
+def neuerApfel():
+    global apfel
+    while True:
+        a = (randint(0, B - 1), randint(0, H - 1))
+        if a not in schlange:
+            apfel = a
+            return
+
+def taste(e):
+    global naechste
+    code = e.getKeyCode()
+    # Pfeiltasten oder WASD
+    if code in (37, 65) and richtung != (1, 0):
+        naechste = (-1, 0)
+    elif code in (39, 68) and richtung != (-1, 0):
+        naechste = (1, 0)
+    elif code in (38, 87) and richtung != (0, 1):
+        naechste = (0, -1)
+    elif code in (40, 83) and richtung != (0, -1):
+        naechste = (0, 1)
+    elif code == 82 and not lebt:   # R = Neustart
+        neuesSpiel()
+
+def schritt():
+    global richtung, punkte, lebt
+    richtung = naechste
+    kopf = (schlange[0][0] + richtung[0], schlange[0][1] + richtung[1])
+    # Wand oder eigener Koerper getroffen?
+    if kopf[0] < 0 or kopf[0] >= B or kopf[1] < 0 or kopf[1] >= H \
+       or kopf in schlange[:-1]:
+        lebt = False
+        return
+    schlange.insert(0, kopf)
+    if kopf == apfel:
+        punkte += 1
+        neuerApfel()
+    else:
+        schlange.pop()
+
+def zeichnen():
+    bg = getBg()
+    bg.clear(Color.black)
+    bg.fillCell(Location(apfel[0], apfel[1]), Color.red)
+    for i in range(len(schlange)):
+        x, y = schlange[i]
+        if i == 0:
+            bg.fillCell(Location(x, y), Color.yellow)
+        else:
+            bg.fillCell(Location(x, y), Color.green)
+    if lebt:
+        setTitle("Snake - Punkte: " + str(punkte))
+    else:
+        setTitle("GAME OVER - Punkte: " + str(punkte) + " - R = Neustart")
+
+makeGameGrid(B, H, Z, None, Color.black, False, keyPressed = taste)
+show()
+neuesSpiel()
+
+while not isDisposed():
+    if lebt:
+        schritt()
+    zeichnen()
+    refresh()
+    delay(max(60, 150 - punkte * 4))   # wird mit jedem Apfel schnellerfrom gamegrid import *
+from java.awt import Color
+from random import randint
+
+B = 20      # Spielfeld-Breite in Feldern
+H = 20      # Spielfeld-Hoehe in Feldern
+Z = 28      # Groesse eines Feldes in Pixeln
+
+def neuesSpiel():
+    global schlange, richtung, naechste, apfel, punkte, lebt
+    schlange = [(10, 10), (9, 10), (8, 10)]
+    richtung = (1, 0)
+    naechste = richtung
+    punkte = 0
+    lebt = True
+    neuerApfel()
+
+def neuerApfel():
+    global apfel
+    while True:
+        a = (randint(0, B - 1), randint(0, H - 1))
+        if a not in schlange:
+            apfel = a
+            return
+
+def taste(e):
+    global naechste
+    code = e.getKeyCode()
+    # Pfeiltasten oder WASD
+    if code in (37, 65) and richtung != (1, 0):
+        naechste = (-1, 0)
+    elif code in (39, 68) and richtung != (-1, 0):
+        naechste = (1, 0)
+    elif code in (38, 87) and richtung != (0, 1):
+        naechste = (0, -1)
+    elif code in (40, 83) and richtung != (0, -1):
+        naechste = (0, 1)
+    elif code == 82 and not lebt:   # R = Neustart
+        neuesSpiel()
+
+def schritt():
+    global richtung, punkte, lebt
+    richtung = naechste
+    kopf = (schlange[0][0] + richtung[0], schlange[0][1] + richtung[1])
+    # Wand oder eigener Koerper getroffen?
+    if kopf[0] < 0 or kopf[0] >= B or kopf[1] < 0 or kopf[1] >= H \
+       or kopf in schlange[:-1]:
+        lebt = False
+        return
+    schlange.insert(0, kopf)
+    if kopf == apfel:
+        punkte += 1
+        neuerApfel()
+    else:
+        schlange.pop()
+
+def zeichnen():
+    bg = getBg()
+    bg.clear(Color.black)
+    bg.fillCell(Location(apfel[0], apfel[1]), Color.red)
+    for i in range(len(schlange)):
+        x, y = schlange[i]
+        if i == 0:
+            bg.fillCell(Location(x, y), Color.yellow)
+        else:
+            bg.fillCell(Location(x, y), Color.green)
+    if lebt:
+        setTitle("Snake - Punkte: " + str(punkte))
+    else:
+        setTitle("GAME OVER - Punkte: " + str(punkte) + " - R = Neustart")
+
+makeGameGrid(B, H, Z, None, Color.black, False, keyPressed = taste)
+show()
+neuesSpiel()
+
+while not isDisposed():
+    if lebt:
+        schritt()
+    zeichnen()
+    refresh()
+    delay(max(60, 150 - punkte * 4))   # wird mit jedem Apfel schnellerfrom gamegrid import *
+from java.awt import Color
+from random import randint
+
+B = 20      # Spielfeld-Breite in Feldern
+H = 20      # Spielfeld-Hoehe in Feldern
+Z = 28      # Groesse eines Feldes in Pixeln
+
+def neuesSpiel():
+    global schlange, richtung, naechste, apfel, punkte, lebt
+    schlange = [(10, 10), (9, 10), (8, 10)]
+    richtung = (1, 0)
+    naechste = richtung
+    punkte = 0
+    lebt = True
+    neuerApfel()
+
+def neuerApfel():
+    global apfel
+    while True:
+        a = (randint(0, B - 1), randint(0, H - 1))
+        if a not in schlange:
+            apfel = a
+            return
+
+def taste(e):
+    global naechste
+    code = e.getKeyCode()
+    # Pfeiltasten oder WASD
+    if code in (37, 65) and richtung != (1, 0):
+        naechste = (-1, 0)
+    elif code in (39, 68) and richtung != (-1, 0):
+        naechste = (1, 0)
+    elif code in (38, 87) and richtung != (0, 1):
+        naechste = (0, -1)
+    elif code in (40, 83) and richtung != (0, -1):
+        naechste = (0, 1)
+    elif code == 82 and not lebt:   # R = Neustart
+        neuesSpiel()
+
+def schritt():
+    global richtung, punkte, lebt
+    richtung = naechste
+    kopf = (schlange[0][0] + richtung[0], schlange[0][1] + richtung[1])
+    # Wand oder eigener Koerper getroffen?
+    if kopf[0] < 0 or kopf[0] >= B or kopf[1] < 0 or kopf[1] >= H \
+       or kopf in schlange[:-1]:
+        lebt = False
+        return
+    schlange.insert(0, kopf)
+    if kopf == apfel:
+        punkte += 1
+        neuerApfel()
+    else:
+        schlange.pop()
+
+def zeichnen():
+    bg = getBg()
+    bg.clear(Color.black)
+    bg.fillCell(Location(apfel[0], apfel[1]), Color.red)
+    for i in range(len(schlange)):
+        x, y = schlange[i]
+        if i == 0:
+            bg.fillCell(Location(x, y), Color.yellow)
+        else:
+            bg.fillCell(Location(x, y), Color.green)
+    if lebt:
+        setTitle("Snake - Punkte: " + str(punkte))
+    else:
+        setTitle("GAME OVER - Punkte: " + str(punkte) + " - R = Neustart")
+
+makeGameGrid(B, H, Z, None, Color.black, False, keyPressed = taste)
+show()
+neuesSpiel()
+
+while not isDisposed():
+    if lebt:
+        schritt()
+    zeichnen()
+    refresh()
+    delay(max(60, 150 - punkte * 4))   # wird mit jedem Apfel schnellerfrom gamegrid import *
+from java.awt import Color
+from random import randint
+
+B = 20      # Spielfeld-Breite in Feldern
+H = 20      # Spielfeld-Hoehe in Feldern
+Z = 28      # Groesse eines Feldes in Pixeln
+
+def neuesSpiel():
+    global schlange, richtung, naechste, apfel, punkte, lebt
+    schlange = [(10, 10), (9, 10), (8, 10)]
+    richtung = (1, 0)
+    naechste = richtung
+    punkte = 0
+    lebt = True
+    neuerApfel()
+
+def neuerApfel():
+    global apfel
+    while True:
+        a = (randint(0, B - 1), randint(0, H - 1))
+        if a not in schlange:
+            apfel = a
+            return
+
+def taste(e):
+    global naechste
+    code = e.getKeyCode()
+    # Pfeiltasten oder WASD
+    if code in (37, 65) and richtung != (1, 0):
+        naechste = (-1, 0)
+    elif code in (39, 68) and richtung != (-1, 0):
+        naechste = (1, 0)
+    elif code in (38, 87) and richtung != (0, 1):
+        naechste = (0, -1)
+    elif code in (40, 83) and richtung != (0, -1):
+        naechste = (0, 1)
+    elif code == 82 and not lebt:   # R = Neustart
+        neuesSpiel()
+
+def schritt():
+    global richtung, punkte, lebt
+    richtung = naechste
+    kopf = (schlange[0][0] + richtung[0], schlange[0][1] + richtung[1])
+    # Wand oder eigener Koerper getroffen?
+    if kopf[0] < 0 or kopf[0] >= B or kopf[1] < 0 or kopf[1] >= H \
+       or kopf in schlange[:-1]:
+        lebt = False
+        return
+    schlange.insert(0, kopf)
+    if kopf == apfel:
+        punkte += 1
+        neuerApfel()
+    else:
+        schlange.pop()
+
+def zeichnen():
+    bg = getBg()
+    bg.clear(Color.black)
+    bg.fillCell(Location(apfel[0], apfel[1]), Color.red)
+    for i in range(len(schlange)):
+        x, y = schlange[i]
+        if i == 0:
+            bg.fillCell(Location(x, y), Color.yellow)
+        else:
+            bg.fillCell(Location(x, y), Color.green)
+    if lebt:
+        setTitle("Snake - Punkte: " + str(punkte))
+    else:
+        setTitle("GAME OVER - Punkte: " + str(punkte) + " - R = Neustart")
+
+makeGameGrid(B, H, Z, None, Color.black, False, keyPressed = taste)
+show()
+neuesSpiel()
+
+while not isDisposed():
+    if lebt:
+        schritt()
+    zeichnen()
+    refresh()
+    delay(max(60, 150 - punkte * 4))   # wird mit jedem Apfel schnellerfrom gamegrid import *
+from java.awt import Color
+from random import randint
+
+B = 20      # Spielfeld-Breite in Feldern
+H = 20      # Spielfeld-Hoehe in Feldern
+Z = 28      # Groesse eines Feldes in Pixeln
+
+def neuesSpiel():
+    global schlange, richtung, naechste, apfel, punkte, lebt
+    schlange = [(10, 10), (9, 10), (8, 10)]
+    richtung = (1, 0)
+    naechste = richtung
+    punkte = 0
+    lebt = True
+    neuerApfel()
+
+def neuerApfel():
+    global apfel
+    while True:
+        a = (randint(0, B - 1), randint(0, H - 1))
+        if a not in schlange:
+            apfel = a
+            return
+
+def taste(e):
+    global naechste
+    code = e.getKeyCode()
+    # Pfeiltasten oder WASD
+    if code in (37, 65) and richtung != (1, 0):
+        naechste = (-1, 0)
+    elif code in (39, 68) and richtung != (-1, 0):
+        naechste = (1, 0)
+    elif code in (38, 87) and richtung != (0, 1):
+        naechste = (0, -1)
+    elif code in (40, 83) and richtung != (0, -1):
+        naechste = (0, 1)
+    elif code == 82 and not lebt:   # R = Neustart
+        neuesSpiel()
+
+def schritt():
+    global richtung, punkte, lebt
+    richtung = naechste
+    kopf = (schlange[0][0] + richtung[0], schlange[0][1] + richtung[1])
+    # Wand oder eigener Koerper getroffen?
+    if kopf[0] < 0 or kopf[0] >= B or kopf[1] < 0 or kopf[1] >= H \
+       or kopf in schlange[:-1]:
+        lebt = False
+        return
+    schlange.insert(0, kopf)
+    if kopf == apfel:
+        punkte += 1
+        neuerApfel()
+    else:
+        schlange.pop()
+
+def zeichnen():
+    bg = getBg()
+    bg.clear(Color.black)
+    bg.fillCell(Location(apfel[0], apfel[1]), Color.red)
+    for i in range(len(schlange)):
+        x, y = schlange[i]
+        if i == 0:
+            bg.fillCell(Location(x, y), Color.yellow)
+        else:
+            bg.fillCell(Location(x, y), Color.green)
+    if lebt:
+        setTitle("Snake - Punkte: " + str(punkte))
+    else:
+        setTitle("GAME OVER - Punkte: " + str(punkte) + " - R = Neustart")
+
+makeGameGrid(B, H, Z, None, Color.black, False, keyPressed = taste)
+show()
+neuesSpiel()
+
+while not isDisposed():
+    if lebt:
+        schritt()
+    zeichnen()
+    refresh()
+    delay(max(60, 150 - punkte * 4))   # wird mit jedem Apfel schneller
