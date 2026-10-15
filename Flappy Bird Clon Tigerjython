@@ -1,0 +1,87 @@
+from gamegrid import *
+from java.awt import Color, Point
+from random import randint
+
+W = 400          # Fensterbreite
+H = 600          # Fensterhoehe
+VX = 100         # feste x-Position des Vogels
+R = 12           # Radius des Vogels
+BREITE = 60      # Breite der Roehren
+LUECKE = 130     # Groesse der Luecke (kleiner = schwerer)
+ABSTAND = 220    # Abstand zwischen den Roehren
+
+def neuesSpiel():
+    global y, vy, roehren, punkte, lebt, tempo
+    y = H / 2.0
+    vy = 0.0
+    punkte = 0
+    tempo = 4.0
+    lebt = True
+    roehren = []
+    for i in range(3):
+        neueRoehre(W + i * ABSTAND)
+
+def neueRoehre(x):
+    roehren.append([x, randint(120, H - 120 - LUECKE), False])
+
+def taste(e):
+    global vy
+    code = e.getKeyCode()
+    if code == 32 or code == 38:        # Leertaste oder Pfeil hoch
+        if lebt:
+            vy = -7.5                   # Flap!
+        else:
+            neuesSpiel()
+    elif code == 82 and not lebt:       # R = Neustart
+        neuesSpiel()
+
+def schritt():
+    global y, vy, punkte, lebt, tempo
+    vy += 0.5                           # Schwerkraft
+    y += vy
+    if y < R or y > H - R:              # Decke oder Boden
+        lebt = False
+        return
+    for r in roehren:
+        r[0] -= tempo
+        # Kollision mit Roehre
+        if r[0] - R < VX < r[0] + BREITE + R:
+            if y - R < r[1] or y + R > r[1] + LUECKE:
+                lebt = False
+                return
+        # Punkt vergeben
+        if not r[2] and r[0] + BREITE < VX:
+            r[2] = True
+            punkte += 1
+            tempo = min(9.0, tempo + 0.25)
+    if roehren[0][0] < -BREITE:
+        roehren.pop(0)
+        neueRoehre(roehren[-1][0] + ABSTAND)
+
+def zeichnen():
+    bg = getBg()
+    bg.clear(Color(110, 200, 255))
+    bg.setPaintColor(Color(40, 170, 60))
+    for r in roehren:
+        x = int(r[0])
+        bg.fillRectangle(Point(x, 0), Point(x + BREITE, r[1]))
+        bg.fillRectangle(Point(x, r[1] + LUECKE), Point(x + BREITE, H))
+    bg.setPaintColor(Color.yellow)
+    bg.fillCircle(Point(VX, int(y)), R)
+    bg.setPaintColor(Color.black)
+    bg.fillCircle(Point(VX + 5, int(y) - 4), 3)
+    if lebt:
+        setTitle("Flappy - Punkte: " + str(punkte))
+    else:
+        setTitle("GAME OVER - Punkte: " + str(punkte) + " - Leertaste = Neustart")
+
+makeGameGrid(W, H, 1, None, None, False, keyPressed = taste)
+show()
+neuesSpiel()
+
+while not isDisposed():
+    if lebt:
+        schritt()
+    zeichnen()
+    refresh()
+    delay(25)
