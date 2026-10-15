@@ -1,0 +1,1335 @@
+# ===============================================================
+#  NEON ARENA  -  Arcade-Shooter fuer TigerJython (Desktop)
+#
+#  WASD        = bewegen
+#  PFEILTASTEN = schiessen (auch diagonal)
+#  LEERTASTE   = Dash (unverwundbar, zerstoert schwache Gegner)
+#  P           = Pause
+# ===============================================================
+from gamegrid import *
+from java.awt import Color, Point, Font
+from java.lang import System
+from math import sin, cos, sqrt, atan2, pi
+from random import random, uniform, randint, choice, shuffle
+
+W = 800
+H = 600
+MAXLEBEN = 5
+
+# typ: (Leben, Radius, Tempo, Farbe, Punkte, Ecken)
+DATEN = {
+    "chaser":   (1, 12, 120, (255, 70, 90), 10, 4),
+    "shooter":  (3, 15, 85, (255, 60, 230), 30, 4),
+    "splitter": (4, 17, 80, (255, 150, 40), 25, 6),
+    "mini":     (1, 8, 165, (255, 200, 90), 5, 3),
+    "tank":     (12, 27, 55, (80, 255, 130), 80, 8),
+    "dart":     (1, 11, 70, (255, 240, 60), 20, 3),
+    "boss":     (60, 44, 80, (255, 255, 255), 1000, 12)
+}
+KOSTEN = {"chaser": 1, "shooter": 3, "splitter": 3, "dart": 2, "tank": 6}
+
+ITEMFARBE = {"T": (255, 225, 70), "R": (255, 130, 40), "S": (90, 150, 255),
+             "N": (255, 255, 255), "H": (255, 90, 150)}
+ITEMNAME = {"T": "TRIPLE", "R": "TURBO", "S": "SCHILD", "N": "NUKE", "H": "+1 LEBEN"}
+ITEMZEICHEN = {"T": "T", "R": "R", "S": "S", "N": "N", "H": "+"}
+
+GRIDFARBEN = [(40, 70, 170), (110, 50, 170), (170, 50, 110), (40, 140, 140), (150, 120, 40)]
+CYAN = (60, 240, 255)
+WEISS = (255, 255, 255)
+REKORDDATEI = System.getProperty("user.home") + "/neon_arena_rekord.txt"
+
+
+class Zustand(object):
+    pass
+
+
+S = Zustand()
+S.ox = 0.0
+S.oy = 0.0
+S.zeit = 0.0
+S.rekord = 0
+S.sterne = []
+for i in range(30):
+    S.sterne.append([uniform(0, W), uniform(0, H), uniform(4, 22), uniform(40, 170)])
+
+gehalten = {}
+EREIGNISSE = []
+FONTS = {}
+
+
+# ---------------------------------------------------------------
+#  Tastatur (mit Schutz gegen Linux-Tastenwiederholung)
+# ---------------------------------------------------------------
+def taste(e):
+    c = e.getKeyCode()
+    neu = c not in gehalten
+    gehalten[c] = 0
+    if neu:
+        EREIGNISSE.append(c)
+
+
+def los(e):
+    gehalten[e.getKeyCode()] = System.currentTimeMillis()
+
+
+def aufraeumen():
+    jetzt = System.currentTimeMillis()
+    for c in list(gehalten.keys()):
+        t = gehalten.get(c, 0)
+        if t != 0 and jetzt - t > 70:
+            gehalten.pop(c, None)
+
+
+def down(c):
+    return c in gehalten
+
+
+# ---------------------------------------------------------------
+#  Kleine Helfer
+# ---------------------------------------------------------------
+def cl(v):
+    if v < 0:
+        return 0
+    if v > 255:
+        return 255
+    return int(v)
+
+
+def P(x, y):
+    return Point(int(x + S.ox), int(y + S.oy))
+
+
+def font(g):
+    if g not in FONTS:
+        FONTS[g] = Font("Monospaced", Font.BOLD, g)
+    return FONTS[g]
+
+
+def text(bg, s, x, y, groesse, col, a=255, mitte=False, welt=False):
+    bg.setFont(font(groesse))
+    bg.setPaintColor(Color(col[0], col[1], col[2], cl(a)))
+    if mitte:
+        x = x - len(s) * groesse * 0.6 / 2.0
+    if welt:
+        x = x + S.ox
+        y = y + S.oy
+    bg.drawText(s, Point(int(x), int(y)))
+
+
+def vieleck(bg, x, y, n, r, rot, col, breite, a=255):
+    bg.setLineWidth(breite)
+    bg.setPaintColor(Color(col[0], col[1], col[2], cl(a)))
+    pts = []
+    for i in range(n):
+        w = rot + 2.0 * pi * i / n
+        pts.append(P(x + cos(w) * r, y + sin(w) * r))
+    for i in range(n):
+        bg.drawLine(pts[i], pts[(i + 1) % n])
+
+
+def glut(bg, x, y, r, col, a):
+    bg.setPaintColor(Color(col[0], col[1], col[2], cl(a)))
+    bg.fillCircle(P(x, y), int(r))
+
+
+def rekordLaden():
+    try:
+        f = open(REKORDDATEI, "r")
+        s = f.read()
+        f.close()
+        return int(s.strip())
+    except:
+        return 0
+
+
+def rekordSpeichern(v):
+    try:
+        f = open(REKORDDATEI, "w")
+        f.write(str(v))
+        f.close()
+    except:
+        pass
+
+
+# ---------------------------------------------------------------
+#  Effekte
+# ---------------------------------------------------------------
+def funken(x, y, col, anzahl, tempo, leben):
+    for i in range(anzahl):
+        if len(S.partikel) > 420:
+            return
+        w = uniform(0, 2.0 * pi)
+        v = uniform(0.2, 1.0) * tempo
+        S.partikel.append([x, y, cos(w) * v, sin(w) * v, uniform(0.3, 1.0) * leben, leben,
+                           col[0], col[1], col[2]])
+
+
+def ring(x, y, maxr, col, dauer):
+    S.ringe.append([x, y, maxr, dauer, dauer, col])
+
+
+def shake(v):
+    S.shake = min(16.0, S.shake + v)
+
+
+def popup(x, y, s, col):
+    if len(S.texte) > 14:
+        S.texte.pop(0)
+    S.texte.append([x, y, s, 1.0, col])
+
+
+def explosion(x, y, col, groesse):
+    funken(x, y, col, int(8 + groesse * 0.9), 120 + groesse * 7, 0.7)
+    funken(x, y, WEISS, int(3 + groesse * 0.2), 200, 0.35)
+    ring(x, y, groesse * 2.6 + 20, col, 0.45)
+    S.puls = min(1.0, S.puls + groesse * 0.012)
+
+
+# ---------------------------------------------------------------
+#  Spielfiguren
+# ---------------------------------------------------------------
+class Spieler(object):
+    def __init__(self):
+        self.x = W / 2.0
+        self.y = H / 2.0 + 80.0
+        self.vx = 0.0
+        self.vy = 0.0
+        self.leben = 3
+        self.unverw = 1.5
+        self.dash = 0.0
+        self.dashcd = 0.0
+        self.dashdx = 1.0
+        self.dashdy = 0.0
+        self.feuer = 0.0
+        self.winkel = -pi / 2.0
+        self.triple = 0.0
+        self.rapid = 0.0
+        self.schild = 0.0
+
+
+class Feind(object):
+    def __init__(self, typ, x, y):
+        d = DATEN[typ]
+        self.typ = typ
+        self.x = x
+        self.y = y
+        self.vx = 0.0
+        self.vy = 0.0
+        self.hp = d[0]
+        self.maxhp = d[0]
+        self.r = d[1]
+        self.speed = d[2] * min(1.5, 1.0 + 0.02 * S.welle)
+        self.farbe = d[3]
+        self.seiten = d[5]
+        self.t = random() * 10.0
+        self.zeit = uniform(0.5, 1.8)
+        self.t2 = 3.0
+        self.zustand = 0
+        self.winkel = 0.0
+        self.blitz = 0.0
+        self.tot = False
+        self.phase = 0
+        if typ == "shooter":
+            self.zustand = choice([-1, 1])
+            self.t2 = uniform(2.0, 4.0)
+        if typ == "boss":
+            n = S.welle // 5
+            self.hp = 60 + 40 * (n - 1)
+            self.maxhp = self.hp
+            self.speed = 80.0
+            self.zeit = 2.0
+
+
+# ---------------------------------------------------------------
+#  Neues Spiel / Wellen
+# ---------------------------------------------------------------
+def neuesSpiel():
+    S.zustand = "spiel"
+    S.spieler = Spieler()
+    S.kugeln = []
+    S.feindkugeln = []
+    S.feinde = []
+    S.neu = []
+    S.partikel = []
+    S.ringe = []
+    S.items = []
+    S.marker = []
+    S.texte = []
+    S.punkte = 0
+    S.combo = 0
+    S.combozeit = 0.0
+    S.welle = 0
+    S.spawnliste = []
+    S.spawnzeit = 0.0
+    S.pause_zw = 1.3
+    S.bannertext = "BEREIT?"
+    S.bannerzeit = 1.3
+    S.shake = 0.0
+    S.blitz = 0.0
+    S.slow = 0.0
+    S.puls = 0.0
+    S.totzeit = 0.0
+    S.neuerrekord = False
+
+
+def starteWelle():
+    S.welle += 1
+    n = S.welle
+    liste = []
+    if n % 5 == 0:
+        liste.append("boss")
+        for i in range(4 + (n // 5) * 2):
+            liste.append("chaser")
+        S.bannertext = "ACHTUNG - BOSS"
+    else:
+        budget = 3 + 3 * n
+        pool = ["chaser", "chaser"]
+        if n >= 2:
+            pool.append("shooter")
+        if n >= 3:
+            pool.append("splitter")
+            pool.append("dart")
+        if n >= 4:
+            pool.append("tank")
+        if n >= 6:
+            pool.append("dart")
+            pool.append("shooter")
+        while budget > 0:
+            typ = choice(pool)
+            c = KOSTEN[typ]
+            if c > budget:
+                typ = "chaser"
+                c = 1
+            liste.append(typ)
+            budget -= c
+        shuffle(liste)
+        S.bannertext = "WELLE " + str(n)
+    S.spawnliste = liste
+    S.spawnzeit = 0.5
+    S.bannerzeit = 2.2
+
+
+def welleGeschafft():
+    S.pause_zw = 2.6
+    bonus = 100 * S.welle
+    S.punkte += bonus
+    popup(W / 2.0, H / 2.0 - 40, "WELLE GESCHAFFT +" + str(bonus), (120, 255, 160))
+    S.bannertext = "WELLE GESCHAFFT"
+    S.bannerzeit = 1.8
+    if random() < 0.6:
+        itemAbwerfen(uniform(150, W - 150), uniform(150, H - 150))
+
+
+def spawnPunkt(mind):
+    sp = S.spieler
+    for i in range(30):
+        x = uniform(50, W - 50)
+        y = uniform(50, H - 50)
+        dx = x - sp.x
+        dy = y - sp.y
+        if dx * dx + dy * dy > mind * mind:
+            return x, y
+    return uniform(50, W - 50), 50.0
+
+
+def itemAbwerfen(x, y, typ=None):
+    if typ is None:
+        r = random()
+        if r < 0.28:
+            typ = "T"
+        elif r < 0.55:
+            typ = "R"
+        elif r < 0.78:
+            typ = "S"
+        elif r < 0.90:
+            typ = "N"
+        else:
+            typ = "H"
+    if typ == "H" and S.spieler.leben >= MAXLEBEN:
+        typ = "S"
+    S.items.append([x, y, typ, 0.0, 12.0])
+
+
+# ---------------------------------------------------------------
+#  Treffer, Tod, Spezialeffekte
+# ---------------------------------------------------------------
+def feindschuss(x, y, w, v):
+    if len(S.feindkugeln) > 260:
+        return
+    S.feindkugeln.append([x + cos(w) * 10, y + sin(w) * 10, cos(w) * v, sin(w) * v, 7.0])
+
+
+def treffer(f, dmg, vx, vy):
+    f.hp -= dmg
+    f.blitz = 0.07
+    funken(f.x, f.y, f.farbe, 4, 150, 0.35)
+    if f.hp <= 0:
+        toeten(f)
+    elif f.typ != "boss":
+        f.x += vx * 0.006
+        f.y += vy * 0.006
+    else:
+        shake(0.4)
+
+
+def toeten(f):
+    if f.tot:
+        return
+    f.tot = True
+    d = DATEN[f.typ]
+    S.combo += 1
+    S.combozeit = 2.4
+    mult = min(10, 1 + S.combo // 5)
+    pts = d[4] * mult
+    S.punkte += pts
+    popup(f.x, f.y - 10, str(pts), d[3])
+    explosion(f.x, f.y, d[3], f.r)
+    shake(f.r * 0.12)
+    if f.typ == "splitter":
+        for i in range(3):
+            w = uniform(0, 2.0 * pi)
+            m = Feind("mini", f.x + cos(w) * 10, f.y + sin(w) * 10)
+            m.vx = cos(w) * 260
+            m.vy = sin(w) * 260
+            S.neu.append(m)
+    chance = 0.06
+    if f.typ == "tank":
+        chance = 0.7
+    elif f.typ == "splitter":
+        chance = 0.12
+    elif f.typ == "shooter":
+        chance = 0.10
+    elif f.typ == "mini":
+        chance = 0.0
+    elif f.typ == "boss":
+        chance = 0.0
+    if random() < chance:
+        itemAbwerfen(f.x, f.y)
+    if f.typ == "boss":
+        bossBesiegt(f)
+
+
+def bossBesiegt(f):
+    S.slow = 1.0
+    shake(16)
+    S.blitz = 0.7
+    S.feindkugeln = []
+    cols = [(255, 90, 90), (255, 170, 50), (255, 60, 255), CYAN, WEISS]
+    for i in range(5):
+        ring(f.x, f.y, 120 + i * 70, cols[i], 0.6 + i * 0.12)
+    funken(f.x, f.y, WEISS, 120, 520, 1.2)
+    funken(f.x, f.y, (255, 120, 60), 100, 380, 1.0)
+    S.spieler.leben = min(MAXLEBEN, S.spieler.leben + 1)
+    popup(f.x, f.y - 50, "BOSS BESIEGT +1 LEBEN", (120, 255, 160))
+    itemAbwerfen(f.x - 40, f.y, "H")
+    itemAbwerfen(f.x + 40, f.y)
+    for g in S.feinde:
+        if g is not f and not g.tot:
+            toeten(g)
+
+
+def stossWelle(x, y, radius, col):
+    ring(x, y, radius, col, 0.5)
+    ring(x, y, radius * 0.6, WEISS, 0.35)
+    for f in S.feinde:
+        if f.tot or f.typ == "boss":
+            continue
+        dx = f.x - x
+        dy = f.y - y
+        d = sqrt(dx * dx + dy * dy) + 0.001
+        if d < radius + f.r:
+            if f.hp <= 1:
+                toeten(f)
+            else:
+                f.x += dx / d * 70.0
+                f.y += dy / d * 70.0
+
+
+def spielerTreffer():
+    sp = S.spieler
+    if sp.unverw > 0 or sp.dash > 0:
+        return
+    if sp.schild > 0:
+        sp.schild = 0.0
+        sp.unverw = 1.2
+        stossWelle(sp.x, sp.y, 170, (90, 150, 255))
+        shake(6)
+        return
+    sp.leben -= 1
+    sp.unverw = 2.0
+    S.combo = 0
+    S.combozeit = 0.0
+    shake(14)
+    S.blitz = 0.3
+    S.feindkugeln = []
+    stossWelle(sp.x, sp.y, 190, (255, 70, 90))
+    explosion(sp.x, sp.y, CYAN, 22)
+    if sp.leben <= 0:
+        spielEnde()
+
+
+def spielEnde():
+    sp = S.spieler
+    S.zustand = "tot"
+    S.totzeit = 0.0
+    explosion(sp.x, sp.y, CYAN, 46)
+    funken(sp.x, sp.y, WEISS, 90, 450, 1.1)
+    ring(sp.x, sp.y, 500, (255, 70, 90), 1.0)
+    shake(16)
+    S.blitz = 0.5
+    if S.punkte > S.rekord:
+        S.rekord = S.punkte
+        S.neuerrekord = True
+        rekordSpeichern(S.rekord)
+
+
+def nuke():
+    sp = S.spieler
+    S.blitz = 0.9
+    shake(16)
+    S.feindkugeln = []
+    ring(sp.x, sp.y, 950, WEISS, 0.9)
+    ring(sp.x, sp.y, 650, (255, 200, 80), 0.7)
+    ring(sp.x, sp.y, 400, (255, 90, 90), 0.5)
+    for f in S.feinde:
+        if f.tot:
+            continue
+        if f.typ == "boss":
+            treffer(f, 15, 0, 0)
+        else:
+            toeten(f)
+
+
+def einsammeln(it):
+    sp = S.spieler
+    t = it[2]
+    col = ITEMFARBE[t]
+    popup(sp.x, sp.y - 25, ITEMNAME[t], col)
+    ring(sp.x, sp.y, 70, col, 0.4)
+    funken(sp.x, sp.y, col, 14, 200, 0.5)
+    if t == "T":
+        sp.triple = 12.0
+    elif t == "R":
+        sp.rapid = 10.0
+    elif t == "S":
+        sp.schild = 12.0
+    elif t == "N":
+        nuke()
+    elif t == "H":
+        sp.leben = min(MAXLEBEN, sp.leben + 1)
+
+
+# ---------------------------------------------------------------
+#  Eingabe -> Bewegung
+# ---------------------------------------------------------------
+def bewegungsEingabe():
+    ix = 0.0
+    iy = 0.0
+    if down(65):
+        ix -= 1.0
+    if down(68):
+        ix += 1.0
+    if down(87):
+        iy -= 1.0
+    if down(83):
+        iy += 1.0
+    il = sqrt(ix * ix + iy * iy)
+    if il > 0:
+        ix = ix / il
+        iy = iy / il
+    return ix, iy, il
+
+
+def dashStart():
+    sp = S.spieler
+    if sp.dashcd > 0 or sp.dash > 0:
+        return
+    ix, iy, il = bewegungsEingabe()
+    if il == 0:
+        ix = cos(sp.winkel)
+        iy = sin(sp.winkel)
+    sp.dash = 0.17
+    sp.dashcd = 1.1
+    sp.dashdx = ix
+    sp.dashdy = iy
+    sp.unverw = max(sp.unverw, 0.3)
+    ring(sp.x, sp.y, 60, CYAN, 0.3)
+    funken(sp.x, sp.y, CYAN, 14, 260, 0.4)
+    shake(2.5)
+
+
+def spielerUpdate(dt):
+    sp = S.spieler
+    ix, iy, il = bewegungsEingabe()
+    ax = 0.0
+    ay = 0.0
+    if down(37):
+        ax -= 1.0
+    if down(39):
+        ax += 1.0
+    if down(38):
+        ay -= 1.0
+    if down(40):
+        ay += 1.0
+    zielt = (ax != 0.0 or ay != 0.0)
+
+    if sp.unverw > 0:
+        sp.unverw -= dt
+    if sp.dashcd > 0:
+        sp.dashcd -= dt
+    if sp.triple > 0:
+        sp.triple -= dt
+    if sp.rapid > 0:
+        sp.rapid -= dt
+    if sp.schild > 0:
+        sp.schild -= dt
+    sp.feuer -= dt
+
+    # Bewegung
+    if sp.dash > 0:
+        sp.dash -= dt
+        sp.vx = sp.dashdx * 950.0
+        sp.vy = sp.dashdy * 950.0
+        funken(sp.x, sp.y, (150, 250, 255), 2, 60, 0.35)
+    else:
+        sp.vx += ix * 3000.0 * dt
+        sp.vy += iy * 3000.0 * dt
+        f = max(0.0, 1.0 - 9.0 * dt)
+        sp.vx *= f
+        sp.vy *= f
+        v = sqrt(sp.vx * sp.vx + sp.vy * sp.vy)
+        if v > 340.0:
+            sp.vx = sp.vx / v * 340.0
+            sp.vy = sp.vy / v * 340.0
+        if v > 80.0 and random() < 0.7:
+            S.partikel.append([sp.x - sp.vx * 0.04, sp.y - sp.vy * 0.04,
+                               -sp.vx * 0.2 + uniform(-30, 30), -sp.vy * 0.2 + uniform(-30, 30),
+                               0.3, 0.3, 60, 200, 255])
+    sp.x += sp.vx * dt
+    sp.y += sp.vy * dt
+    sp.x = max(16.0, min(W - 16.0, sp.x))
+    sp.y = max(16.0, min(H - 16.0, sp.y))
+
+    # Blickrichtung
+    if zielt:
+        ziel = atan2(ay, ax)
+    elif il > 0:
+        ziel = atan2(iy, ix)
+    else:
+        ziel = sp.winkel
+    diff = ziel - sp.winkel
+    while diff > pi:
+        diff -= 2.0 * pi
+    while diff < -pi:
+        diff += 2.0 * pi
+    schritt = 16.0 * dt
+    if diff > schritt:
+        diff = schritt
+    elif diff < -schritt:
+        diff = -schritt
+    sp.winkel += diff
+
+    # Schiessen
+    if zielt and sp.feuer <= 0 and sp.dash <= 0 and len(S.kugeln) < 140:
+        rate = 0.13
+        if sp.rapid > 0:
+            rate = 0.065
+        sp.feuer = rate
+        basis = atan2(ay, ax)
+        winkel = [basis]
+        if sp.triple > 0:
+            winkel = [basis - 0.2, basis, basis + 0.2]
+        for w in winkel:
+            w2 = w + uniform(-0.03, 0.03)
+            S.kugeln.append([sp.x + cos(w2) * 16, sp.y + sin(w2) * 16,
+                             cos(w2) * 760.0, sin(w2) * 760.0, 0.9])
+        funken(sp.x + cos(basis) * 18, sp.y + sin(basis) * 18, (200, 255, 255), 2, 120, 0.2)
+
+
+# ---------------------------------------------------------------
+#  Gegner-KI
+# ---------------------------------------------------------------
+def bossUpdate(f, dt):
+    sp = S.spieler
+    f.t += dt
+    frac = f.hp / float(f.maxhp)
+    if frac > 0.66:
+        ph = 0
+    elif frac > 0.33:
+        ph = 1
+    else:
+        ph = 2
+    if ph != f.phase:
+        f.phase = ph
+        S.feindkugeln = []
+        ring(f.x, f.y, 420, WEISS, 0.7)
+        shake(10)
+        S.blitz = 0.3
+        S.bannertext = "PHASE " + str(ph + 1)
+        S.bannerzeit = 1.4
+        f.zeit = 1.0
+    if ph < 2:
+        tx = W / 2.0 + cos(f.t * 0.5) * 230.0
+        ty = 190.0 + sin(f.t * 0.8) * 90.0
+        v = 90.0
+    else:
+        tx = sp.x
+        ty = sp.y
+        v = 75.0
+    dx = tx - f.x
+    dy = ty - f.y
+    d = sqrt(dx * dx + dy * dy) + 0.001
+    s = min(d, v)
+    f.x += dx / d * s * dt
+    f.y += dy / d * s * dt
+
+    f.zeit -= dt
+    if ph == 0:
+        if f.zeit <= 0:
+            f.zeit = 2.0
+            n = 16
+            off = f.zustand * pi / n
+            f.zustand = 1 - f.zustand
+            for i in range(n):
+                feindschuss(f.x, f.y, off + 2.0 * pi * i / n, 190)
+    elif ph == 1:
+        f.winkel += dt * 2.2
+        if f.zeit <= 0:
+            f.zeit = 0.11
+            for arm in range(3):
+                feindschuss(f.x, f.y, f.winkel + arm * 2.0 * pi / 3.0, 200)
+    else:
+        f.winkel += dt * 2.8
+        if f.zeit <= 0:
+            f.zeit = 0.15
+            for arm in range(2):
+                feindschuss(f.x, f.y, f.winkel + arm * pi, 220)
+        f.t2 -= dt
+        if f.t2 <= 0:
+            f.t2 = 2.4
+            w = atan2(sp.y - f.y, sp.x - f.x)
+            for i in range(5):
+                feindschuss(f.x, f.y, w + (i - 2) * 0.18, 260)
+            for i in range(2):
+                S.neu.append(Feind("chaser", f.x + uniform(-40, 40), f.y + uniform(-40, 40)))
+
+
+def feindUpdate(f, dt):
+    sp = S.spieler
+    f.t += dt
+    if f.blitz > 0:
+        f.blitz -= dt
+    typ = f.typ
+    if typ == "boss":
+        bossUpdate(f, dt)
+        return
+    dx = sp.x - f.x
+    dy = sp.y - f.y
+    d = sqrt(dx * dx + dy * dy) + 0.001
+    w = atan2(dy, dx)
+    k = min(1.0, 4.0 * dt)
+
+    if typ == "chaser" or typ == "mini" or typ == "splitter":
+        if typ == "splitter":
+            w = w + sin(f.t * 1.5) * 0.2
+            f.winkel += dt * 2.0
+        else:
+            w = w + sin(f.t * 3.0) * 0.45
+            f.winkel += dt * 3.0
+        f.vx += (cos(w) * f.speed - f.vx) * k
+        f.vy += (sin(w) * f.speed - f.vy) * k
+        f.x += f.vx * dt
+        f.y += f.vy * dt
+
+    elif typ == "shooter":
+        f.winkel += dt
+        if d > 300:
+            mx = cos(w)
+            my = sin(w)
+        elif d < 200:
+            mx = -cos(w)
+            my = -sin(w)
+        else:
+            mx = -sin(w) * f.zustand
+            my = cos(w) * f.zustand
+        f.t2 -= dt
+        if f.t2 <= 0:
+            f.zustand = -f.zustand
+            f.t2 = uniform(2.0, 4.0)
+        f.vx += (mx * f.speed - f.vx) * k
+        f.vy += (my * f.speed - f.vy) * k
+        f.x += f.vx * dt
+        f.y += f.vy * dt
+        f.zeit -= dt
+        if f.zeit < 0.3 and f.zeit > 0:
+            f.blitz = 0.05
+        if f.zeit <= 0:
+            f.zeit = max(0.9, 2.2 - 0.05 * S.welle) + uniform(0.0, 0.4)
+            n = 1
+            if S.welle >= 6:
+                n = 3
+            if S.welle >= 11:
+                n = 5
+            for i in range(n):
+                off = (i - (n - 1) / 2.0) * 0.22
+                feindschuss(f.x, f.y, w + off, 235)
+
+    elif typ == "tank":
+        f.winkel += dt * 1.2
+        f.x += cos(w) * f.speed * dt
+        f.y += sin(w) * f.speed * dt
+        f.zeit -= dt
+        if f.zeit <= 0:
+            f.zeit = 3.5
+            n = 8
+            if S.welle >= 9:
+                n = 12
+            for i in range(n):
+                feindschuss(f.x, f.y, f.winkel + 2.0 * pi * i / n, 170)
+
+    elif typ == "dart":
+        if f.zustand == 0:
+            f.winkel = w
+            f.x += cos(w) * f.speed * dt
+            f.y += sin(w) * f.speed * dt
+            f.zeit -= dt
+            if f.zeit <= 0:
+                f.zustand = 1
+                f.zeit = 0.7
+        elif f.zustand == 1:
+            f.zeit -= dt
+            if f.zeit > 0.3:
+                f.winkel = w
+            f.blitz = 0.05
+            if f.zeit <= 0:
+                f.zustand = 2
+                f.zeit = 0.75
+        elif f.zustand == 2:
+            f.zeit -= dt
+            f.x += cos(f.winkel) * 600.0 * dt
+            f.y += sin(f.winkel) * 600.0 * dt
+            funken(f.x, f.y, f.farbe, 1, 40, 0.3)
+            if f.x < 6 or f.x > W - 6 or f.y < 6 or f.y > H - 6:
+                f.zeit = 0
+                funken(f.x, f.y, f.farbe, 8, 200, 0.4)
+            if f.zeit <= 0:
+                f.zustand = 3
+                f.zeit = 0.8
+        else:
+            f.winkel = w
+            f.zeit -= dt
+            if f.zeit <= 0:
+                f.zustand = 0
+                f.zeit = uniform(0.8, 1.5)
+
+    f.x = max(4.0, min(W - 4.0, f.x))
+    f.y = max(4.0, min(H - 4.0, f.y))
+
+
+# ---------------------------------------------------------------
+#  Geschosse, Items, Kollisionen
+# ---------------------------------------------------------------
+def kugelnUpdate(dt):
+    for k in S.kugeln:
+        k[0] += k[2] * dt
+        k[1] += k[3] * dt
+        k[4] -= dt
+    S.kugeln = [k for k in S.kugeln if k[4] > 0 and 0 < k[0] < W and 0 < k[1] < H]
+    for k in S.feindkugeln:
+        k[0] += k[2] * dt
+        k[1] += k[3] * dt
+        k[4] -= dt
+    S.feindkugeln = [k for k in S.feindkugeln
+                     if k[4] > 0 and -30 < k[0] < W + 30 and -30 < k[1] < H + 30]
+
+
+def kollisionen(dt):
+    sp = S.spieler
+    # Spielerkugeln gegen Feinde
+    for f in S.feinde:
+        if f.tot:
+            continue
+        rr = f.r + 5
+        for k in S.kugeln:
+            if k[4] <= 0:
+                continue
+            dx = k[0] - f.x
+            dy = k[1] - f.y
+            if dx * dx + dy * dy < rr * rr:
+                k[4] = 0
+                treffer(f, 1, k[2], k[3])
+                if f.tot:
+                    break
+    S.kugeln = [k for k in S.kugeln if k[4] > 0]
+
+    # Feinde gegen Spieler
+    for f in S.feinde:
+        if f.tot:
+            continue
+        dx = f.x - sp.x
+        dy = f.y - sp.y
+        rr = f.r + 9
+        if dx * dx + dy * dy < rr * rr:
+            if sp.dash > 0:
+                if f.hp <= 1 and f.typ != "boss":
+                    toeten(f)
+            else:
+                spielerTreffer()
+                if S.zustand != "spiel":
+                    return
+
+    # Feindkugeln gegen Spieler
+    if sp.unverw <= 0 and sp.dash <= 0:
+        for k in S.feindkugeln:
+            dx = k[0] - sp.x
+            dy = k[1] - sp.y
+            if dx * dx + dy * dy < 14 * 14:
+                k[4] = 0
+                spielerTreffer()
+                break
+
+    # Items
+    uebrig = []
+    for it in S.items:
+        it[3] += dt
+        it[4] -= dt
+        dx = sp.x - it[0]
+        dy = sp.y - it[1]
+        d = sqrt(dx * dx + dy * dy) + 0.001
+        if d < 100:
+            it[0] += dx / d * 280.0 * dt
+            it[1] += dy / d * 280.0 * dt
+        if d < 24:
+            einsammeln(it)
+        elif it[4] > 0:
+            uebrig.append(it)
+    S.items = uebrig
+
+
+def effekteUpdate(dt):
+    drag = max(0.0, 1.0 - 2.5 * dt)
+    neu = []
+    for p in S.partikel:
+        p[4] -= dt
+        if p[4] > 0:
+            p[0] += p[2] * dt
+            p[1] += p[3] * dt
+            p[2] *= drag
+            p[3] *= drag
+            neu.append(p)
+    S.partikel = neu
+    neu = []
+    for r in S.ringe:
+        r[3] -= dt
+        if r[3] > 0:
+            neu.append(r)
+    S.ringe = neu
+    neu = []
+    for t in S.texte:
+        t[3] -= dt
+        t[1] -= 40.0 * dt
+        if t[3] > 0:
+            neu.append(t)
+    S.texte = neu
+    S.shake = max(0.0, S.shake - 45.0 * dt)
+    if S.shake > 0:
+        S.ox = uniform(-1.0, 1.0) * S.shake
+        S.oy = uniform(-1.0, 1.0) * S.shake
+    else:
+        S.ox = 0.0
+        S.oy = 0.0
+    S.blitz = max(0.0, S.blitz - dt * 2.5)
+    S.puls = max(0.0, S.puls - dt * 2.0)
+    if S.bannerzeit > 0:
+        S.bannerzeit -= dt
+
+
+def sterneUpdate(dt):
+    for s in S.sterne:
+        s[0] -= s[2] * dt
+        if s[0] < 0:
+            s[0] = W
+            s[1] = uniform(0, H)
+
+
+def wellenUpdate(dt):
+    fertig = []
+    rest = []
+    for m in S.marker:
+        m[3] -= dt
+        if m[3] <= 0:
+            fertig.append(m)
+        else:
+            rest.append(m)
+    S.marker = rest
+    for m in fertig:
+        f = Feind(m[2], m[0], m[1])
+        S.feinde.append(f)
+        funken(m[0], m[1], f.farbe, 14, 160, 0.4)
+        ring(m[0], m[1], 50, f.farbe, 0.3)
+        if m[2] == "boss":
+            shake(8)
+            ring(m[0], m[1], 300, WEISS, 0.6)
+
+    if S.pause_zw > 0:
+        S.pause_zw -= dt
+        if S.pause_zw <= 0:
+            starteWelle()
+        return
+
+    S.spawnzeit -= dt
+    if len(S.spawnliste) > 0 and S.spawnzeit <= 0 and len(S.feinde) + len(S.marker) < 38:
+        typ = S.spawnliste.pop(0)
+        if typ == "boss":
+            x = W / 2.0
+            y = 150.0
+            dauer = 1.8
+        else:
+            x, y = spawnPunkt(240)
+            dauer = 0.9
+        S.marker.append([x, y, typ, dauer, dauer])
+        S.spawnzeit = max(0.22, 0.9 - 0.025 * S.welle)
+
+    if len(S.spawnliste) == 0 and len(S.marker) == 0 and len(S.feinde) == 0:
+        welleGeschafft()
+
+
+def aktualisiere(rdt):
+    dt = rdt
+    if S.slow > 0:
+        S.slow -= rdt
+        dt = rdt * 0.3
+    spielerUpdate(dt)
+    for f in S.feinde:
+        if not f.tot:
+            feindUpdate(f, dt)
+    kugelnUpdate(dt)
+    kollisionen(dt)
+    if S.zustand != "spiel":
+        return
+    S.feinde = [f for f in S.feinde if not f.tot] + S.neu
+    S.neu = []
+    if S.combozeit > 0:
+        S.combozeit -= dt
+        if S.combozeit <= 0:
+            S.combo = 0
+    wellenUpdate(dt)
+    effekteUpdate(dt)
+
+
+# ---------------------------------------------------------------
+#  Zeichnen
+# ---------------------------------------------------------------
+def zeichneHintergrund(bg):
+    bg.clear(Color(7, 7, 18))
+    for s in S.sterne:
+        bg.setPaintColor(Color(150, 170, 255, cl(s[3])))
+        bg.fillRectangle(Point(int(s[0]), int(s[1])), Point(int(s[0]) + 2, int(s[1]) + 2))
+    gc = GRIDFARBEN[(S.welle - 1) % len(GRIDFARBEN)]
+    bg.setLineWidth(1)
+    bg.setPaintColor(Color(gc[0], gc[1], gc[2], cl(55 + S.puls * 130)))
+    for x in range(0, W + 1, 40):
+        bg.drawLine(P(x, 0), P(x, H))
+    for y in range(0, H + 1, 40):
+        bg.drawLine(P(0, y), P(W, y))
+    bg.setLineWidth(3)
+    bg.setPaintColor(Color(60, 240, 255, 110))
+    bg.drawLine(P(2, 2), P(W - 2, 2))
+    bg.drawLine(P(W - 2, 2), P(W - 2, H - 2))
+    bg.drawLine(P(W - 2, H - 2), P(2, H - 2))
+    bg.drawLine(P(2, H - 2), P(2, 2))
+
+
+def zeichneFeind(bg, f):
+    col = f.farbe
+    if f.blitz > 0:
+        col = WEISS
+    r = f.r
+    typ = f.typ
+    if typ == "boss":
+        bcols = [(255, 90, 90), (255, 170, 50), (255, 60, 255)]
+        if f.blitz <= 0:
+            col = bcols[f.phase]
+        glut(bg, f.x, f.y, r * 2.0, col, 35)
+        glut(bg, f.x, f.y, r * 1.4, col, 30)
+        vieleck(bg, f.x, f.y, 12, r, f.t * 0.4, col, 3)
+        vieleck(bg, f.x, f.y, 6, r * 0.65, -f.t * 0.9, col, 2)
+        for i in range(4):
+            w = f.t * 1.5 + i * pi / 2.0
+            glut(bg, f.x + cos(w) * r, f.y + sin(w) * r, 7, col, 200)
+        pulse = 0.5 + 0.5 * sin(f.t * 5.0)
+        glut(bg, f.x, f.y, 8 + pulse * 6, WEISS, 200)
+        return
+    glut(bg, f.x, f.y, r * 1.8, col, 40)
+    if typ == "dart":
+        if f.zustand == 1:
+            bg.setLineWidth(2)
+            bg.setPaintColor(Color(255, 240, 60, 90 + int(60 * sin(S.zeit * 40.0) + 60)))
+            bg.drawLine(P(f.x, f.y), P(f.x + cos(f.winkel) * 900.0, f.y + sin(f.winkel) * 900.0))
+        vieleck(bg, f.x, f.y, 3, r * 1.3, f.winkel, col, 2)
+        return
+    vieleck(bg, f.x, f.y, f.seiten, r, f.winkel, col, 2)
+    if f.maxhp > 1:
+        anteil = f.hp / float(f.maxhp)
+        vieleck(bg, f.x, f.y, f.seiten, r * (0.2 + 0.55 * anteil), -f.winkel, col, 2, 200)
+
+
+def zeichneSpieler(bg):
+    sp = S.spieler
+    if sp.unverw > 0 and sp.dash <= 0:
+        if int(S.zeit * 18.0) % 2 == 0:
+            return
+    col = CYAN
+    if sp.dash > 0:
+        col = WEISS
+    glut(bg, sp.x, sp.y, 26, col, 35)
+    glut(bg, sp.x, sp.y, 17, col, 35)
+    w = sp.winkel
+    nase = P(sp.x + cos(w) * 18, sp.y + sin(w) * 18)
+    links = P(sp.x + cos(w + 2.5) * 15, sp.y + sin(w + 2.5) * 15)
+    hinten = P(sp.x + cos(w + pi) * 7, sp.y + sin(w + pi) * 7)
+    rechts = P(sp.x + cos(w - 2.5) * 15, sp.y + sin(w - 2.5) * 15)
+    bg.setLineWidth(2)
+    bg.setPaintColor(Color(col[0], col[1], col[2], 255))
+    bg.drawLine(nase, links)
+    bg.drawLine(links, hinten)
+    bg.drawLine(hinten, rechts)
+    bg.drawLine(rechts, nase)
+    if sp.schild > 0:
+        if sp.schild > 2.0 or int(S.zeit * 12.0) % 2 == 0:
+            bg.setLineWidth(3)
+            bg.setPaintColor(Color(90, 150, 255, cl(150 + 80 * sin(S.zeit * 8.0))))
+            bg.drawCircle(P(sp.x, sp.y), 25)
+
+
+def zeichneWelt(bg):
+    # Ringe
+    bg.setLineWidth(3)
+    for r in S.ringe:
+        anteil = r[3] / r[4]
+        radius = r[2] * (1.0 - anteil * anteil)
+        c = r[5]
+        bg.setPaintColor(Color(c[0], c[1], c[2], cl(anteil * 220)))
+        bg.drawCircle(P(r[0], r[1]), int(radius))
+    # Items
+    for it in S.items:
+        if it[4] < 3.0 and int(S.zeit * 10.0) % 2 == 0:
+            continue
+        col = ITEMFARBE[it[2]]
+        pulse = 1.0 + 0.15 * sin(S.zeit * 6.0 + it[0])
+        glut(bg, it[0], it[1], 24 * pulse, col, 45)
+        vieleck(bg, it[0], it[1], 6, 14 * pulse, S.zeit * 2.0, col, 2)
+        text(bg, ITEMZEICHEN[it[2]], it[0], it[1] + 6, 18, col, 255, True, True)
+    # Spawn-Marker
+    for m in S.marker:
+        anteil = m[3] / m[4]
+        col = DATEN[m[2]][3]
+        gr = 30.0
+        if m[2] == "boss":
+            gr = 75.0
+        rr = gr * (0.4 + anteil * 0.9)
+        bg.setLineWidth(2)
+        bg.setPaintColor(Color(col[0], col[1], col[2], cl(110 + 110 * (1.0 - anteil))))
+        bg.drawCircle(P(m[0], m[1]), int(rr))
+        vieleck(bg, m[0], m[1], 4, gr * 0.3, S.zeit * 6.0, col, 2, 200)
+    # Feinde
+    for f in S.feinde:
+        if not f.tot:
+            zeichneFeind(bg, f)
+    # Spielerkugeln
+    bg.setLineWidth(3)
+    for k in S.kugeln:
+        bg.setPaintColor(Color(200, 255, 255, 255))
+        bg.drawLine(P(k[0], k[1]), P(k[0] - k[2] * 0.025, k[1] - k[3] * 0.025))
+        glut(bg, k[0], k[1], 7, CYAN, 55)
+    # Feindkugeln
+    viele = len(S.feindkugeln) > 120
+    for k in S.feindkugeln:
+        if not viele:
+            glut(bg, k[0], k[1], 10, (255, 60, 200), 60)
+        glut(bg, k[0], k[1], 5, (255, 80, 210), 255)
+        glut(bg, k[0], k[1], 2, (255, 230, 250), 255)
+    # Spieler
+    if S.zustand != "tot":
+        zeichneSpieler(bg)
+    # Partikel
+    bg.setLineWidth(2)
+    for p in S.partikel:
+        a = p[4] / p[5] * 255.0
+        bg.setPaintColor(Color(p[6], p[7], p[8], cl(a)))
+        bg.drawLine(P(p[0], p[1]), P(p[0] - p[2] * 0.04, p[1] - p[3] * 0.04))
+    # Texte
+    for t in S.texte:
+        text(bg, t[2], t[0], t[1], 16, t[4], t[3] * 255.0, True, True)
+
+
+def zeichneHud(bg):
+    sp = S.spieler
+    text(bg, "SCORE " + ("%07d" % S.punkte), 16, 28, 20, WEISS)
+    if S.combo > 0:
+        mult = min(10, 1 + S.combo // 5)
+        text(bg, "x" + str(mult) + "  KOMBO " + str(S.combo), 16, 50, 16, (255, 220, 80))
+        breite = int(150 * min(1.0, S.combozeit / 2.4))
+        bg.setPaintColor(Color(255, 220, 80, 200))
+        bg.fillRectangle(Point(16, 56), Point(16 + breite, 60))
+    s1 = "WELLE " + str(S.welle)
+    text(bg, s1, W - 16 - len(s1) * 20 * 0.6, 28, 20, WEISS)
+    s2 = "REKORD " + ("%07d" % S.rekord)
+    text(bg, s2, W - 16 - len(s2) * 14 * 0.6, 48, 14, (160, 170, 220))
+    # Leben
+    for i in range(sp.leben):
+        vieleck(bg, 30 + i * 30, H - 28, 3, 10, -pi / 2.0, CYAN, 2)
+    # Power-Ups
+    y = H - 44
+    liste = [("TRIPLE", sp.triple, 12.0, ITEMFARBE["T"]),
+             ("TURBO", sp.rapid, 10.0, ITEMFARBE["R"]),
+             ("SCHILD", sp.schild, 12.0, ITEMFARBE["S"])]
+    for name, rest, voll, col in liste:
+        if rest > 0:
+            text(bg, name, W / 2.0 - 110, y + 10, 12, col)
+            bg.setPaintColor(Color(col[0], col[1], col[2], 220))
+            bg.fillRectangle(Point(int(W / 2.0 - 40), y), Point(int(W / 2.0 - 40 + 120 * rest / voll), y + 8))
+            y -= 16
+    # Dash
+    bereit = 1.0 - max(0.0, sp.dashcd) / 1.1
+    text(bg, "DASH", W - 160, H - 18, 14, CYAN if bereit >= 1.0 else (120, 140, 160))
+    bg.setPaintColor(Color(60, 240, 255, 60))
+    bg.fillRectangle(Point(W - 105, H - 28), Point(W - 16, H - 20))
+    bg.setPaintColor(Color(60, 240, 255, 230))
+    bg.fillRectangle(Point(W - 105, H - 28), Point(int(W - 105 + 89 * bereit), H - 20))
+    # Boss-Balken
+    for f in S.feinde:
+        if f.typ == "boss" and not f.tot:
+            anteil = max(0.0, f.hp / float(f.maxhp))
+            bg.setPaintColor(Color(255, 255, 255, 50))
+            bg.fillRectangle(Point(200, 70), Point(600, 80))
+            bg.setPaintColor(Color(255, 80, 120, 230))
+            bg.fillRectangle(Point(200, 70), Point(int(200 + 400 * anteil), 80))
+            text(bg, "BOSS", W / 2.0, 66, 14, WEISS, 255, True)
+
+
+def zeichneMenue(bg):
+    zeichneHintergrund(bg)
+    t = S.zeit
+    kt = ["chaser", "shooter", "splitter", "tank", "dart", "mini"]
+    for i in range(6):
+        w = t * 0.5 + i * pi / 3.0
+        d = DATEN[kt[i]]
+        x = W / 2.0 + cos(w) * 330
+        y = H / 2.0 + sin(w) * 230
+        glut(bg, x, y, d[1] * 1.8, d[3], 40)
+        vieleck(bg, x, y, d[5], d[1], t * 2.0, d[3], 2)
+    text(bg, "NEON ARENA", W / 2.0 - 4, 170, 72, (255, 60, 200), 170, True)
+    text(bg, "NEON ARENA", W / 2.0 + 4, 166, 72, CYAN, 170, True)
+    text(bg, "NEON ARENA", W / 2.0, 168, 72, WEISS, 255, True)
+    text(bg, "UEBERLEBE ENDLOSE WELLEN - BESIEGE DIE BOSSE", W / 2.0, 205, 16, (160, 170, 230), 255, True)
+    zeilen = ["WASD ........... bewegen",
+              "PFEILE ......... schiessen (auch diagonal)",
+              "LEERTASTE ...... DASH: unverwundbar, zerstoert Schwache",
+              "P .............. Pause"]
+    y = 265
+    for z in zeilen:
+        text(bg, z, W / 2.0, y, 17, (210, 220, 255), 255, True)
+        y += 26
+    x = 150
+    for k in ["T", "R", "S", "N", "H"]:
+        col = ITEMFARBE[k]
+        vieleck(bg, x, 410, 6, 13, t * 2.0, col, 2)
+        text(bg, ITEMZEICHEN[k], x, 416, 16, col, 255, True)
+        text(bg, ITEMNAME[k], x, 445, 12, col, 255, True)
+        x += 125
+    if int(t * 2.0) % 2 == 0:
+        text(bg, "LEERTASTE ZUM STARTEN", W / 2.0, 515, 26, (255, 230, 90), 255, True)
+    if S.rekord > 0:
+        text(bg, "REKORD " + ("%07d" % S.rekord), W / 2.0, 560, 16, (160, 170, 220), 255, True)
+
+
+def zeichne(bg):
+    if S.zustand == "menu":
+        zeichneMenue(bg)
+        return
+    zeichneHintergrund(bg)
+    zeichneWelt(bg)
+    S.ox = 0.0
+    S.oy = 0.0
+    zeichneHud(bg)
+    if S.blitz > 0:
+        bg.setPaintColor(Color(255, 255, 255, cl(min(1.0, S.blitz) * 150)))
+        bg.fillRectangle(Point(0, 0), Point(W, H))
+    if S.bannerzeit > 0 and S.zustand == "spiel":
+        a = min(1.0, S.bannerzeit / 0.6) * 255.0
+        text(bg, S.bannertext, W / 2.0 - 3, 232, 54, (255, 60, 200), a * 0.6, True)
+        text(bg, S.bannertext, W / 2.0 + 3, 228, 54, CYAN, a * 0.6, True)
+        text(bg, S.bannertext, W / 2.0, 230, 54, WEISS, a, True)
+    if S.zustand == "pause":
+        bg.setPaintColor(Color(0, 0, 0, 150))
+        bg.fillRectangle(Point(0, 0), Point(W, H))
+        text(bg, "PAUSE", W / 2.0, 290, 64, WEISS, 255, True)
+        text(bg, "P = weiter", W / 2.0, 330, 18, (180, 190, 230), 255, True)
+    if S.zustand == "tot":
+        bg.setPaintColor(Color(0, 0, 0, cl(min(1.0, S.totzeit) * 150)))
+        bg.fillRectangle(Point(0, 0), Point(W, H))
+        if S.totzeit > 0.4:
+            text(bg, "GAME OVER", W / 2.0, 250, 68, (255, 70, 90), 255, True)
+            text(bg, "SCORE " + ("%07d" % S.punkte) + "   WELLE " + str(S.welle),
+                 W / 2.0, 300, 22, WEISS, 255, True)
+            if S.neuerrekord and int(S.zeit * 4.0) % 2 == 0:
+                text(bg, "NEUER REKORD!", W / 2.0, 340, 26, (255, 230, 90), 255, True)
+            if S.totzeit > 1.2:
+                text(bg, "LEERTASTE = NOCHMAL", W / 2.0, 400, 22, CYAN, 255, True)
+
+
+# ---------------------------------------------------------------
+#  Ereignisse und Hauptschleife
+# ---------------------------------------------------------------
+def verarbeiteEreignisse():
+    while len(EREIGNISSE) > 0:
+        c = EREIGNISSE.pop(0)
+        if S.zustand == "menu":
+            if c == 32 or c == 10:
+                neuesSpiel()
+        elif S.zustand == "spiel":
+            if c == 32:
+                dashStart()
+            elif c == 80 or c == 27:
+                S.zustand = "pause"
+        elif S.zustand == "pause":
+            if c == 80 or c == 27 or c == 32 or c == 10:
+                S.zustand = "spiel"
+        elif S.zustand == "tot":
+            if (c == 32 or c == 10 or c == 82) and S.totzeit > 1.2:
+                neuesSpiel()
+
+
+makeGameGrid(W, H, 1, None, None, False, keyPressed = taste, keyReleased = los)
+setTitle("NEON ARENA")
+show()
+try:
+    getBg().enableAntialiasing()
+except:
+    pass
+
+neuesSpiel()
+S.zustand = "menu"
+S.rekord = rekordLaden()
+letzt = System.nanoTime()
+
+while not isDisposed():
+    jetzt = System.nanoTime()
+    dt = (jetzt - letzt) / 1000000000.0
+    letzt = jetzt
+    if dt > 0.05:
+        dt = 0.05
+    S.zeit += dt
+    aufraeumen()
+    verarbeiteEreignisse()
+    sterneUpdate(dt)
+    if S.zustand == "spiel":
+        aktualisiere(dt)
+    elif S.zustand == "tot":
+        S.totzeit += dt
+        effekteUpdate(dt)
+    bg = getBg()
+    zeichne(bg)
+    refresh()
+    delay(8)
