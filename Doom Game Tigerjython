@@ -1,0 +1,347 @@
+from gamegrid import *
+from java.awt import Color, Point, Font
+from math import sin, cos, sqrt
+
+W = 640
+H = 400
+STEP = 4
+N = W // STEP
+FOV = 0.66
+
+KARTE = [
+ "################",
+ "#P.....#.......#",
+ "#......#...E...#",
+ "#..##..#.......#",
+ "#..##..###.#####",
+ "#..............#",
+ "#.....E....##..#",
+ "####.####..##..#",
+ "#....#.........#",
+ "#.E..#..#####..#",
+ "#....#..#...#..#",
+ "#....#..#.E.#..#",
+ "#.......#...#..#",
+ "#..#########.###",
+ "#.........E....#",
+ "################"]
+
+gedrueckt = set()
+zbuf = [10.0] * N
+
+def frei(x, y, r):
+    for ox in (-r, r):
+        for oy in (-r, r):
+            if KARTE[int(y + oy)][int(x + ox)] == '#':
+                return False
+    return True
+
+def sicht(x0, y0, x1, y1):
+    d = sqrt((x1 - x0) ** 2 + (y1 - y0) ** 2)
+    if d == 0:
+        return True
+    n = int(d / 0.2)
+    for i in range(1, n):
+        t = i * 0.2 / d
+        tx = x0 + (x1 - x0) * t
+        ty = y0 + (y1 - y0) * t
+        if not frei(tx, ty, 0):
+            return False
+    return True
+
+def neuesSpiel():
+    global px, py, w, dx, dy, plx, ply
+    global hp, kills, feinde, cooldown, blitz, schaden
+    feinde = []
+    for j in range(16):
+        for i in range(16):
+            c = KARTE[j][i]
+            if c == 'P':
+                px = i + 0.5
+                py = j + 0.5
+            elif c == 'E':
+                feinde.append([i + 0.5, j + 0.5, 3, 0, 0, 0])
+    w = 0.3
+    dx = cos(w)
+    dy = sin(w)
+    plx = -dy * FOV
+    ply = dx * FOV
+    hp = 100
+    kills = 0
+    cooldown = 0
+    blitz = 0
+    schaden = 0
+
+def taste(e):
+    code = e.getKeyCode()
+    gedrueckt.add(code)
+    if code == 82:
+        neuesSpiel()
+
+def los(e):
+    gedrueckt.discard(e.getKeyCode())
+
+def kamera(f):
+    sx = f[0] - px
+    sy = f[1] - py
+    inv = 1.0 / (plx * dy - dx * ply)
+    tx = inv * (dy * sx - dx * sy)
+    ty = inv * (-ply * sx + plx * sy)
+    return tx, ty
+
+def schiessen():
+    global cooldown, blitz, kills
+    cooldown = 14
+    blitz = 4
+    bestes = None
+    bestTy = zbuf[N // 2]
+    for f in feinde:
+        if f[2] > 0:
+            tx, ty = kamera(f)
+            if ty > 0.2 and abs(tx) < 0.25 and ty < bestTy:
+                bestTy = ty
+                bestes = f
+    if bestes is not None:
+        bestes[2] -= 1
+        bestes[4] = 6
+        bestes[5] = 1
+        if bestes[2] <= 0:
+            kills += 1
+
+def aktualisiere():
+    global px, py, w, dx, dy, plx, ply, hp, cooldown, blitz, schaden
+    if 37 in gedrueckt or 81 in gedrueckt:
+        w -= 0.055
+    if 39 in gedrueckt or 69 in gedrueckt:
+        w += 0.055
+    dx = cos(w)
+    dy = sin(w)
+    plx = -dy * FOV
+    ply = dx * FOV
+    vx = 0.0
+    vy = 0.0
+    if 87 in gedrueckt or 38 in gedrueckt:
+        vx += dx * 0.07
+        vy += dy * 0.07
+    if 83 in gedrueckt or 40 in gedrueckt:
+        vx -= dx * 0.05
+        vy -= dy * 0.05
+    if 65 in gedrueckt:
+        vx += dy * 0.05
+        vy -= dx * 0.05
+    if 68 in gedrueckt:
+        vx -= dy * 0.05
+        vy += dx * 0.05
+    if frei(px + vx, py, 0.2):
+        px += vx
+    if frei(px, py + vy, 0.2):
+        py += vy
+    if cooldown > 0:
+        cooldown -= 1
+    if blitz > 0:
+        blitz -= 1
+    if schaden > 0:
+        schaden -= 1
+    if 32 in gedrueckt and cooldown <= 0:
+        schiessen()
+    for f in feinde:
+        if f[4] > 0:
+            f[4] -= 1
+        if f[2] <= 0:
+            continue
+        ex = px - f[0]
+        ey = py - f[1]
+        dist = sqrt(ex * ex + ey * ey)
+        if f[5] == 0 and dist < 9 and sicht(f[0], f[1], px, py):
+            f[5] = 1
+        if f[5] == 1:
+            if dist > 0.9:
+                nx = f[0] + ex / dist * 0.03
+                ny = f[1] + ey / dist * 0.03
+                if frei(nx, f[1], 0.25):
+                    f[0] = nx
+                if frei(f[0], ny, 0.25):
+                    f[1] = ny
+            else:
+                f[3] -= 1
+                if f[3] <= 0:
+                    hp -= 10
+                    f[3] = 35
+                    schaden = 8
+
+def zeichneWelt(bg):
+    bg.setPaintColor(Color(50, 50, 60))
+    bg.fillRectangle(Point(0, 0), Point(W, H // 2))
+    bg.setPaintColor(Color(85, 65, 45))
+    bg.fillRectangle(Point(0, H // 2), Point(W, H))
+    for col in range(N):
+        kam = 2.0 * col / N - 1.0
+        rx = dx + plx * kam
+        ry = dy + ply * kam
+        mx = int(px)
+        my = int(py)
+        if rx != 0:
+            ddx = abs(1.0 / rx)
+        else:
+            ddx = 1e30
+        if ry != 0:
+            ddy = abs(1.0 / ry)
+        else:
+            ddy = 1e30
+        if rx < 0:
+            sx = -1
+            sdx = (px - mx) * ddx
+        else:
+            sx = 1
+            sdx = (mx + 1.0 - px) * ddx
+        if ry < 0:
+            sy = -1
+            sdy = (py - my) * ddy
+        else:
+            sy = 1
+            sdy = (my + 1.0 - py) * ddy
+        seite = 0
+        while True:
+            if sdx < sdy:
+                sdx += ddx
+                mx += sx
+                seite = 0
+            else:
+                sdy += ddy
+                my += sy
+                seite = 1
+            if KARTE[my][mx] == '#':
+                break
+        if seite == 0:
+            d = sdx - ddx
+            wx = py + d * ry
+        else:
+            d = sdy - ddy
+            wx = px + d * rx
+        if d < 0.05:
+            d = 0.05
+        zbuf[col] = d
+        h = int(H / d)
+        top = H // 2 - h // 2
+        shade = max(0.15, 1.0 - d / 12.0)
+        if seite == 1:
+            shade = shade * 0.7
+        fr = wx - int(wx)
+        if fr < 0.04 or fr > 0.96:
+            shade = shade * 0.6
+        farbe = Color(int(170 * shade), int(70 * shade), int(55 * shade))
+        bg.setPaintColor(farbe)
+        x0 = col * STEP
+        bg.fillRectangle(Point(x0, top), Point(x0 + STEP, top + h))
+
+def zeichneFeinde(bg):
+    liste = []
+    for f in feinde:
+        if f[2] > 0:
+            dist2 = (f[0] - px) ** 2 + (f[1] - py) ** 2
+            liste.append((dist2, f))
+    liste.sort(key = lambda t: t[0])
+    liste.reverse()
+    for dummy, f in liste:
+        tx, ty = kamera(f)
+        if ty < 0.15:
+            continue
+        scr = int(W / 2.0 * (1 + tx / ty))
+        size = int(H / ty)
+        breite = size // 2
+        start = scr - breite // 2
+        oben = H // 2 - size // 2 + size // 10
+        unten = H // 2 + size // 2
+        kopfUnten = oben + size // 3
+        augeO = oben + size // 14
+        augeU = oben + size // 8
+        shade = max(0.25, 1.0 - ty / 12.0)
+        if f[4] > 0:
+            koerper = Color(255, 255, 255)
+            kopf = Color(255, 255, 255)
+        else:
+            koerper = Color(int(160 * shade), int(30 * shade), int(30 * shade))
+            kopf = Color(int(230 * shade), int(150 * shade), int(110 * shade))
+        sxp = start
+        while sxp < start + breite:
+            col = sxp // STEP
+            if col >= 0 and col < N and ty < zbuf[col]:
+                bg.setPaintColor(kopf)
+                bg.fillRectangle(Point(sxp, oben), Point(sxp + STEP, kopfUnten))
+                bg.setPaintColor(koerper)
+                bg.fillRectangle(Point(sxp, kopfUnten), Point(sxp + STEP, unten))
+                u = (sxp - start) / float(breite)
+                if (u > 0.22 and u < 0.36) or (u > 0.64 and u < 0.78):
+                    bg.setPaintColor(Color.yellow)
+                    bg.fillRectangle(Point(sxp, augeO), Point(sxp + STEP, augeU))
+            sxp += STEP
+
+def zeichneHud(bg):
+    gy = H - 4
+    if blitz > 0:
+        bg.setPaintColor(Color(255, 200, 50))
+        bg.fillCircle(Point(W // 2, H - 95), 22)
+        bg.setPaintColor(Color.white)
+        bg.fillCircle(Point(W // 2, H - 95), 10)
+    bg.setPaintColor(Color(70, 70, 70))
+    bg.fillRectangle(Point(W // 2 - 14, H - 85), Point(W // 2 + 14, gy))
+    bg.setPaintColor(Color(110, 110, 110))
+    bg.fillRectangle(Point(W // 2 - 30, H - 45), Point(W // 2 + 30, gy))
+    bg.setPaintColor(Color.white)
+    bg.fillRectangle(Point(W // 2 - 8, H // 2 - 1), Point(W // 2 + 8, H // 2 + 1))
+    bg.fillRectangle(Point(W // 2 - 1, H // 2 - 8), Point(W // 2 + 1, H // 2 + 8))
+    if schaden > 0:
+        bg.setPaintColor(Color(220, 0, 0))
+        bg.fillRectangle(Point(0, 0), Point(W, 14))
+        bg.fillRectangle(Point(0, H - 14), Point(W, H))
+        bg.fillRectangle(Point(0, 0), Point(14, H))
+        bg.fillRectangle(Point(W - 14, 0), Point(W, H))
+    z = 5
+    bg.setPaintColor(Color(120, 120, 120))
+    for j in range(16):
+        for i in range(16):
+            if KARTE[j][i] == '#':
+                mx0 = 8 + i * z
+                my0 = 8 + j * z
+                bg.fillRectangle(Point(mx0, my0), Point(mx0 + z, my0 + z))
+    bg.setPaintColor(Color.red)
+    for f in feinde:
+        if f[2] > 0:
+            fx = 8 + int(f[0] * z)
+            fy = 8 + int(f[1] * z)
+            bg.fillRectangle(Point(fx - 1, fy - 1), Point(fx + 2, fy + 2))
+    bg.setPaintColor(Color.green)
+    qx = 8 + int(px * z)
+    qy = 8 + int(py * z)
+    bg.fillRectangle(Point(qx - 1, qy - 1), Point(qx + 2, qy + 2))
+    bg.setFont(Font("SansSerif", Font.BOLD, 18))
+    bg.setPaintColor(Color.white)
+    info = "HP: " + str(max(0, hp)) + "   Abschuesse: " + str(kills) + "/" + str(len(feinde))
+    bg.drawText(info, Point(110, 24))
+    if hp <= 0:
+        bg.setFont(Font("SansSerif", Font.BOLD, 36))
+        bg.setPaintColor(Color(255, 40, 40))
+        bg.drawText("DU BIST TOT", Point(W // 2 - 110, H // 2))
+        bg.setFont(Font("SansSerif", Font.BOLD, 18))
+        bg.drawText("R = Neustart", Point(W // 2 - 50, H // 2 + 35))
+    elif kills == len(feinde):
+        bg.setFont(Font("SansSerif", Font.BOLD, 36))
+        bg.setPaintColor(Color(60, 255, 60))
+        bg.drawText("LEVEL GESCHAFFT!", Point(W // 2 - 160, H // 2))
+        bg.setFont(Font("SansSerif", Font.BOLD, 18))
+        bg.drawText("R = Neustart", Point(W // 2 - 50, H // 2 + 35))
+
+makeGameGrid(W, H, 1, None, None, False, keyPressed = taste, keyReleased = los)
+setTitle("DOOM - Pfeile/WASD = Bewegen, Leertaste = Schiessen")
+show()
+neuesSpiel()
+
+while not isDisposed():
+    if hp > 0 and kills < len(feinde):
+        aktualisiere()
+    bg = getBg()
+    zeichneWelt(bg)
+    zeichneFeinde(bg)
+    zeichneHud(bg)
+    refresh()
+    delay(20)
