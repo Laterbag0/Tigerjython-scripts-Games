@@ -1,0 +1,1829 @@
+# ===============================================================
+#  SEELENAUTOMAT.EXE  -  3D-Horror-Raetselspiel fuer TigerJython
+#
+#  W/S = vor/zurueck   A/D = seitwaerts   PFEILE LINKS/RECHTS = drehen
+#  SHIFT = rennen (laut!)   C halten = ducken (leise)   E = benutzen
+# ===============================================================
+from gamegrid import *
+from java.awt import Color, Point, Font
+from java.lang import System
+from math import sin, cos, sqrt, atan2, pi
+from random import random, uniform, randint, choice, shuffle
+
+W = 720
+H = 450
+STEP = 4
+N = W // STEP
+FOV = 0.66
+DETAIL = 1      # 0 = schlichte Waende (schneller), 1 = Mauerwerk mit Fugen und Blut
+
+# ---------------------------------------------------------------
+#  Karte: Raeume und Gaenge werden aus einer schwarzen Masse geschnitzt
+# ---------------------------------------------------------------
+MW = 26
+MH = 22
+RAEUME = [(1, 1, 6, 5), (9, 1, 16, 5), (19, 1, 24, 6),
+          (1, 9, 7, 14), (10, 8, 15, 13), (18, 9, 24, 14),
+          (1, 17, 8, 20), (11, 16, 16, 20), (19, 17, 24, 20)]
+GAENGE = [(7, 3, 8, 4), (17, 3, 18, 4), (3, 6, 4, 8), (12, 6, 13, 7),
+          (21, 7, 22, 8), (8, 11, 9, 12), (16, 10, 17, 11), (3, 15, 4, 16),
+          (12, 14, 13, 15), (21, 15, 22, 16), (9, 18, 10, 19), (17, 18, 18, 19)]
+PFEILER = [(12, 3), (21, 3), (4, 11), (12, 10), (13, 11), (21, 11), (5, 19), (13, 18)]
+EXITX = 25
+EXITY = 18
+
+KARTE = []
+for yy in range(MH):
+    KARTE.append(["#"] * MW)
+
+
+def schnitzen(r):
+    for y in range(r[1], r[3] + 1):
+        for x in range(r[0], r[2] + 1):
+            KARTE[y][x] = "."
+
+
+for r0 in RAEUME:
+    schnitzen(r0)
+for r0 in GAENGE:
+    schnitzen(r0)
+for p0 in PFEILER:
+    KARTE[p0[1]][p0[0]] = "#"
+KARTE[EXITY][EXITX] = "X"
+
+RAUMMITTEN = []
+for r0 in RAEUME:
+    mxx = (r0[0] + r0[2]) // 2
+    myy = (r0[1] + r0[3]) // 2
+    for off in ((0, 0), (1, 0), (0, 1), (-1, 0), (0, -1), (1, 1)):
+        if KARTE[myy + off[1]][mxx + off[0]] == ".":
+            mxx = mxx + off[0]
+            myy = myy + off[1]
+            break
+    RAUMMITTEN.append((mxx + 0.5, myy + 0.5))
+
+WORTE = ["NULL", "EINS", "ZWEI", "DREI", "VIER", "FUENF", "SECHS", "SIEBEN", "ACHT", "NEUN"]
+
+BOOT = [(">> SEELENAUTOMAT.EXE  v6.66", (0, 220, 100)),
+        (">> Lizenz: UNBEKANNT", (0, 220, 100)),
+        (">> Lade Spielstand ........ OK", (0, 220, 100)),
+        (">> Lade Gewissen .......... FEHLER", (255, 50, 50)),
+        (">> Lade Teufel.dll ........ GELADEN", (255, 50, 50)),
+        (">> Spieler erkannt: JA", (0, 220, 100)),
+        (">> Es gibt kein Zurueck.", (255, 50, 50))]
+MENUPUNKTE = ["SPIELEN", "OPTIONEN", "BEENDEN"]
+
+ROT = (255, 40, 40)
+GRUEN = (0, 220, 100)
+WEISS = (255, 255, 255)
+
+gehalten = {}
+EREIGNISSE = []
+FONTS = {}
+
+
+class Zustand(object):
+    pass
+
+
+S = Zustand()
+S.zeit = 0.0
+S.zustand = "boot"
+zbuf = [10.0] * N
+
+
+# ---------------------------------------------------------------
+#  Tastatur (mit Schutz gegen Linux-Tastenwiederholung)
+# ---------------------------------------------------------------
+def taste(e):
+    c = e.getKeyCode()
+    neu = c not in gehalten
+    gehalten[c] = 0
+    if neu:
+        EREIGNISSE.append(c)
+
+
+def los(e):
+    gehalten[e.getKeyCode()] = System.currentTimeMillis()
+
+
+def aufraeumen():
+    jetzt = System.currentTimeMillis()
+    for c in list(gehalten.keys()):
+        t = gehalten.get(c, 0)
+        if t != 0 and jetzt - t > 70:
+            gehalten.pop(c, None)
+
+
+def down(c):
+    return c in gehalten
+
+
+# ---------------------------------------------------------------
+#  Zeichenhelfer
+# ---------------------------------------------------------------
+def cl(v):
+    if v < 0:
+        return 0
+    if v > 255:
+        return 255
+    return int(v)
+
+
+def font(g):
+    if g not in FONTS:
+        FONTS[g] = Font("Monospaced", Font.BOLD, g)
+    return FONTS[g]
+
+
+def text(bg, s, x, y, groesse, col, a=255, mitte=False):
+    if len(s) == 0:
+        return
+    bg.setFont(font(groesse))
+    bg.setPaintColor(Color(cl(col[0]), cl(col[1]), cl(col[2]), cl(a)))
+    if mitte:
+        x = x - len(s) * groesse * 0.6 / 2.0
+    bg.drawText(s, Point(int(x), int(y)))
+
+
+def rechteck(bg, x0, y0, x1, y1, col, a=255):
+    ax = int(min(x0, x1))
+    bx = int(max(x0, x1))
+    ay = int(min(y0, y1))
+    by = int(max(y0, y1))
+    bg.setPaintColor(Color(cl(col[0]), cl(col[1]), cl(col[2]), cl(a)))
+    bg.fillRectangle(Point(ax, ay), Point(bx, by))
+
+
+def kreis(bg, x, y, r, col, a=255):
+    bg.setPaintColor(Color(cl(col[0]), cl(col[1]), cl(col[2]), cl(a)))
+    bg.fillCircle(Point(int(x), int(y)), int(max(0, r)))
+
+
+def linie(bg, x0, y0, x1, y1, col, breite, a=255):
+    bg.setLineWidth(int(breite))
+    bg.setPaintColor(Color(cl(col[0]), cl(col[1]), cl(col[2]), cl(a)))
+    bg.drawLine(Point(int(x0), int(y0)), Point(int(x1), int(y1)))
+
+
+def getippt(s, start, rate):
+    n = int(max(0.0, S.zeit - start) * rate)
+    return s[:n]
+
+
+def teufel(s, dauer=5.0):
+    S.tmsg = s
+    S.tmsgzeit = dauer
+    S.tmsgstart = S.zeit
+
+
+# ---------------------------------------------------------------
+#  Spielfiguren
+# ---------------------------------------------------------------
+class Spieler(object):
+    def __init__(self):
+        self.x = 3.5
+        self.y = 3.5
+        self.w = 0.0
+        self.stamina = 100.0
+        self.erschoepft = False
+        self.augen = 0.5
+        self.schritt = 0.0
+        self.ducken = False
+
+
+class Monster(object):
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.modus = "patrouille"
+        self.zx = x
+        self.zy = y
+        self.wx = x
+        self.wy = y
+        self.pfadzeit = 0.0
+        self.warte = 2.0
+        self.verloren = 0.0
+        self.t = 0.0
+        self.bonus = 0.0
+
+
+# ---------------------------------------------------------------
+#  Neues Spiel
+# ---------------------------------------------------------------
+def druecke(lo, i):
+    x = i % 3
+    y = i // 3
+    for c in ((x, y), (x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+        if c[0] >= 0 and c[0] < 3 and c[1] >= 0 and c[1] < 3:
+            k = c[1] * 3 + c[0]
+            lo[k] = not lo[k]
+
+
+def ziffernText(d):
+    r = randint(0, 2)
+    if r == 0:
+        return WORTE[d]
+    if r == 1:
+        a = randint(0, d)
+        return str(a) + " + " + str(d - a)
+    b = randint(0, 9 - d)
+    return str(d + b) + " - " + str(b)
+
+
+def neuesSpiel():
+    S.sp = Spieler()
+    S.mon = Monster(22.5, 12.5)
+    S.tuerauf = False
+    S.geloest = [False, False, False]
+    S.tode = 0
+    S.spielzeit = 0.0
+    S.licht = 1.0
+    S.flackerzeit = 5.0
+    S.flackerdauer = 0.0
+    S.dunkel = 0.0
+    S.glitch = 0.0
+    S.shake = 0.0
+    S.gefahr = 0.0
+    S.laerm = 0
+    S.bob = 0.0
+    S.nah = None
+    S.tmsg = ""
+    S.tmsgzeit = 0.0
+    S.tmsgstart = 0.0
+    S.crashgezeigt = False
+    S.jagdgemeldet = 0
+    S.hinweis = False
+    S.puz = -1
+    S.puzfertig = 0.0
+    S.puzmsg = ""
+    S.puzfehler = 0.0
+    S.lesezeilen = []
+    S.totzeit = 0.0
+    S.crashstart = 0.0
+    S.endstart = 0.0
+    S.nameeingabe = ""
+    S.nameversuche = 0
+    S.namemsg = ""
+    S.menu = 0
+    S.menumsg = ""
+    S.quit = 0
+    S.bootstart = S.zeit
+    S.introstart = S.zeit
+    # Zahlenschloss
+    S.code = []
+    for i in range(4):
+        S.code.append(randint(0, 9))
+    S.eingabe = ""
+    S.versuche = 0
+    # Seelenschalter
+    lo = [True] * 9
+    z = list(range(9))
+    shuffle(z)
+    for i in range(5):
+        druecke(lo, z[i])
+    if lo.count(True) == 9:
+        druecke(lo, 4)
+    S.lo = lo
+    S.lopos = 4
+    # Teufelscode
+    S.fix = [0, 0]
+    S.fixzeile = 0
+    # Objekte: [typ, x, y, id, gelesen]
+    S.objekte = [["term", 6.5, 10.5, 0, False],
+                 ["term", 23.5, 10.5, 1, False],
+                 ["term", 15.5, 19.5, 2, False],
+                 ["note", 23.5, 2.5, 0, False],
+                 ["note", 11.5, 12.5, 1, False],
+                 ["note", 2.5, 19.5, 2, False],
+                 ["note", 10.5, 2.5, 3, False],
+                 ["note", 12.5, 17.5, 4, False],
+                 ["note", 2.5, 10.5, 5, False],
+                 ["note", 20.5, 19.5, 6, False]]
+    c = S.code
+    t = []
+    for d in c:
+        t.append(ziffernText(d))
+    S.notizen = [
+        ["TAGEBUCH, SEITE 3", "", "Ich habe den Code gesehen.", "Er schreibt ihn ueberall hin.", "",
+         "  1. Ziffer:  " + t[0], "  2. Ziffer:  " + t[1], "", "Er schaut mir zu."],
+        ["In den Boden geritzt:", "", "Die 3. Ziffer ist  " + t[2], "", "Er hoert mich atmen.", "Ich muss leise sein."],
+        ["Letzte Notiz.", "", "Die 4. Ziffer lautet  " + t[3], "Die Quersumme aller Ziffern: " + str(sum(c)), "",
+         "Wenn du das liest, lebe ich nicht mehr."],
+        ["WARNUNG", "", "Der Waerter hoert dich RENNEN.", "Geh langsam. Halte C zum Ducken.", "Geduckt sieht er dich kaum.", "",
+         "Und lass ihn nie hinter dich."],
+        ["Die Terminals fressen Seelen.", "", "Drei Stueck. Drei Seelen.", "Wenn alle frei sind, oeffnet sich", "die Tuer im Osten.", "",
+         "Er mag das nicht."],
+        ["Ich bin ... ich weiss nicht mehr, wer.", "", "...nein, warte.", "Das bist DU.", "", "Wie komme ich in deinen Kopf?"],
+        ["Die Tuer im Osten stellt eine Frage:", "Wer bist du?", "", "Sag ihr: NIEMAND.", "So hat es Odysseus gemacht.", "", "Er mag keine ehrlichen Antworten."]]
+
+
+def respawn():
+    S.sp.x = 3.5
+    S.sp.y = 3.5
+    S.sp.stamina = 100.0
+    S.sp.erschoepft = False
+    best = None
+    for rm in RAUMMITTEN:
+        d = (rm[0] - 3.5) ** 2 + (rm[1] - 3.5) ** 2
+        if best is None or d > best[0]:
+            best = (d, rm)
+    S.mon.x = best[1][0]
+    S.mon.y = best[1][1]
+    S.mon.modus = "patrouille"
+    S.mon.zx = S.mon.x
+    S.mon.zy = S.mon.y
+    S.mon.warte = 3.0
+    S.dunkel = 0.8
+    S.zustand = "spiel"
+    n = S.tode
+    if n == 1:
+        teufel("Das hat weh getan, oder?")
+    elif n == 2:
+        teufel("Wie oft noch?")
+    else:
+        teufel("Ich zaehle mit: " + str(n) + ".")
+
+
+# ---------------------------------------------------------------
+#  Karte, Sicht, Wegsuche
+# ---------------------------------------------------------------
+def tile(ix, iy):
+    if ix < 0 or iy < 0 or ix >= MW or iy >= MH:
+        return "#"
+    return KARTE[iy][ix]
+
+
+def solid(ix, iy):
+    t = tile(ix, iy)
+    if t == "#":
+        return True
+    if t == "X":
+        return not S.tuerauf
+    return False
+
+
+def frei(x, y, r):
+    for ox in (-r, r):
+        for oy in (-r, r):
+            if solid(int(x + ox), int(y + oy)):
+                return False
+    for o in S.objekte:
+        if o[0] == "term":
+            dx = x - o[1]
+            dy = y - o[2]
+            if dx * dx + dy * dy < 0.32 * 0.32:
+                return False
+    return True
+
+
+def sicht(x0, y0, x1, y1):
+    dx = x1 - x0
+    dy = y1 - y0
+    d = sqrt(dx * dx + dy * dy)
+    if d < 0.01:
+        return True
+    n = int(d / 0.15)
+    for i in range(1, n):
+        t = i * 0.15 / d
+        if tile(int(x0 + dx * t), int(y0 + dy * t)) != ".":
+            return False
+    return True
+
+
+def pfadSchritt(sx, sy, tx, ty):
+    a = (int(sx), int(sy))
+    b = (int(tx), int(ty))
+    if a == b:
+        return tx, ty
+    vor = {a: None}
+    queue = [a]
+    qi = 0
+    while qi < len(queue):
+        c = queue[qi]
+        qi += 1
+        if c == b:
+            break
+        for d in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            n = (c[0] + d[0], c[1] + d[1])
+            if n not in vor and tile(n[0], n[1]) == ".":
+                vor[n] = c
+                queue.append(n)
+    if b not in vor:
+        return None
+    c = b
+    while vor[c] is not None and vor[c] != a:
+        c = vor[c]
+    return c[0] + 0.5, c[1] + 0.5
+
+
+# ---------------------------------------------------------------
+#  Monster
+# ---------------------------------------------------------------
+def neuesPatrouillenZiel(m):
+    sp = S.sp
+    if random() < 0.4:
+        best = None
+        for rm in RAUMMITTEN:
+            d = (rm[0] - sp.x) ** 2 + (rm[1] - sp.y) ** 2
+            if best is None or d < best[0]:
+                best = (d, rm)
+        ziel = best[1]
+    else:
+        ziel = choice(RAUMMITTEN)
+    m.zx = ziel[0]
+    m.zy = ziel[1]
+
+
+def monsterBewegen(m, v, dt):
+    ax = m.zx - m.x
+    ay = m.zy - m.y
+    if sqrt(ax * ax + ay * ay) < 0.35:
+        return True
+    m.pfadzeit -= dt
+    if m.pfadzeit <= 0:
+        m.pfadzeit = 0.3
+        p = pfadSchritt(m.x, m.y, m.zx, m.zy)
+        if p is None:
+            return True
+        m.wx = p[0]
+        m.wy = p[1]
+    ex = m.wx - m.x
+    ey = m.wy - m.y
+    e = sqrt(ex * ex + ey * ey)
+    if e > 0.001:
+        s = min(e, v * dt)
+        m.x += ex / e * s
+        m.y += ey / e * s
+    return False
+
+
+def monsterUpdate(dt):
+    m = S.mon
+    sp = S.sp
+    m.t += dt
+    dx = sp.x - m.x
+    dy = sp.y - m.y
+    d = sqrt(dx * dx + dy * dy)
+    S.gefahr = max(0.0, 1.0 - d / 10.0)
+    weite = 9.0
+    if sp.augen < 0.42:
+        weite = 5.0
+    sieht = d < weite and sicht(m.x, m.y, sp.x, sp.y)
+    if sieht:
+        if m.modus != "jagd":
+            m.modus = "jagd"
+            S.glitch = 0.5
+            S.jagdgemeldet += 1
+            if S.jagdgemeldet == 1:
+                teufel("LAUF!", 3.0)
+            else:
+                teufel(choice(["Er hat dich.", "Hinter dir.", "Du bist so laut.", "Zu spaet."]), 3.0)
+        m.verloren = 0.0
+        m.zx = sp.x
+        m.zy = sp.y
+    else:
+        if m.modus == "jagd":
+            m.verloren += dt
+            if m.verloren > 4.0:
+                m.modus = "suche"
+                m.warte = 0.0
+        elif S.laerm == 2 and d < 10.0:
+            m.modus = "suche"
+            m.zx = sp.x
+            m.zy = sp.y
+        elif S.laerm == 1 and d < 2.8:
+            m.modus = "suche"
+            m.zx = sp.x
+            m.zy = sp.y
+    if m.modus == "patrouille":
+        if m.warte > 0:
+            m.warte -= dt
+        else:
+            if monsterBewegen(m, 1.5 + m.bonus, dt):
+                m.warte = uniform(1.0, 2.5)
+                neuesPatrouillenZiel(m)
+    elif m.modus == "suche":
+        if monsterBewegen(m, 2.1 + m.bonus, dt):
+            m.warte += dt
+            if m.warte > 2.0:
+                m.modus = "patrouille"
+                m.warte = 0.0
+                neuesPatrouillenZiel(m)
+    else:
+        v = 2.6 + m.bonus
+        if sieht and d < 6.0:
+            if d > 0.01:
+                m.x += dx / d * v * dt
+                m.y += dy / d * v * dt
+        else:
+            monsterBewegen(m, v, dt)
+    if d < 0.6:
+        gefangen()
+
+
+def gefangen():
+    S.zustand = "tot"
+    S.totzeit = 0.0
+    S.tode += 1
+    S.glitch = 2.0
+    S.shake = 12.0
+
+
+# ---------------------------------------------------------------
+#  Spieler
+# ---------------------------------------------------------------
+def spielerUpdate(dt):
+    sp = S.sp
+    if down(37):
+        sp.w -= 2.2 * dt
+    if down(39):
+        sp.w += 2.2 * dt
+    dx = cos(sp.w)
+    dy = sin(sp.w)
+    ducken = down(67)
+    sp.ducken = ducken
+    ziel = 0.5
+    if ducken:
+        ziel = 0.34
+    sp.augen += (ziel - sp.augen) * min(1.0, 8.0 * dt)
+    vor = 0.0
+    seit = 0.0
+    if down(87) or down(38):
+        vor += 1.0
+    if down(83) or down(40):
+        vor -= 1.0
+    if down(65):
+        seit -= 1.0
+    if down(68):
+        seit += 1.0
+    bewegt = vor != 0.0 or seit != 0.0
+    rennen = bewegt and down(16) and not ducken and not sp.erschoepft and sp.stamina > 0
+    v = 2.3
+    if ducken:
+        v = 1.2
+    if rennen:
+        v = 3.9
+        sp.stamina -= 30.0 * dt
+        if sp.stamina <= 0:
+            sp.stamina = 0.0
+            sp.erschoepft = True
+    else:
+        sp.stamina = min(100.0, sp.stamina + 18.0 * dt)
+        if sp.erschoepft and sp.stamina > 25.0:
+            sp.erschoepft = False
+    S.laerm = 0
+    if bewegt:
+        S.laerm = 1
+        if rennen:
+            S.laerm = 2
+        if ducken:
+            S.laerm = 0
+        n = sqrt(vor * vor + seit * seit)
+        vx = (dx * vor - dy * seit) / n * v * dt
+        vy = (dy * vor + dx * seit) / n * v * dt
+        if frei(sp.x + vx, sp.y, 0.22):
+            sp.x += vx
+        if frei(sp.x, sp.y + vy, 0.22):
+            sp.y += vy
+        sp.schritt += v * dt
+        amp = 2.5
+        if rennen:
+            amp = 5.0
+        S.bob = sin(sp.schritt * 3.0) * amp
+    else:
+        S.bob *= max(0.0, 1.0 - 8.0 * dt)
+    # Tuer
+    if S.tuerauf and int(sp.x) == EXITX and int(sp.y) == EXITY:
+        S.zustand = "name"
+        S.nameeingabe = ""
+        S.nameversuche = 0
+        S.namemsg = "Die Tuer fragt: Wer bist du?"
+        S.namestart = S.zeit
+    # Naechstes Objekt in Blickrichtung
+    S.nah = None
+    best = 1.6
+    for o in S.objekte:
+        ox = o[1] - sp.x
+        oy = o[2] - sp.y
+        d = sqrt(ox * ox + oy * oy)
+        if d < best and d > 0.01:
+            if (ox * dx + oy * dy) / d > 0.5:
+                best = d
+                S.nah = o
+
+
+def benutzen():
+    o = S.nah
+    if o is None:
+        return
+    if o[0] == "note":
+        S.lesezeilen = S.notizen[o[3]]
+        o[4] = True
+        S.zustand = "lesen"
+    else:
+        i = o[3]
+        if S.geloest[i]:
+            teufel("Diese Seele ist schon frei. Leider.", 3.0)
+            return
+        S.puz = i
+        S.puzmsg = ""
+        S.puzfertig = 0.0
+        S.puzfehler = 0.0
+        S.eingabe = ""
+        S.zustand = "puzzle"
+        if i == 0:
+            teufel("Schalte alle Seelen an. Wenn du kannst.", 6.0)
+        elif i == 1:
+            teufel("Vier Ziffern. Die Antworten liegen herum.", 6.0)
+        else:
+            teufel("Mein Code. Mach ihn nicht kaputt.", 6.0)
+
+
+# ---------------------------------------------------------------
+#  Raetsel
+# ---------------------------------------------------------------
+def simuliere(ci, si):
+    leben = 3
+    n = 0
+    while n < 50:
+        if ci == 0:
+            ok = leben < 0
+        elif ci == 1:
+            ok = leben > 0
+        elif ci == 2:
+            ok = leben >= 0
+        else:
+            ok = leben == 3
+        if not ok:
+            break
+        n += 1
+        if si == 0:
+            leben = leben + 1
+        elif si == 1:
+            leben = leben - 1
+        elif si == 2:
+            leben = leben - 2
+        else:
+            leben = leben * 2
+    return n
+
+
+COND = ["while leben < 0:", "while leben > 0:", "while leben >= 0:", "while leben == 3:"]
+STEPS = ["leben = leben + 1", "leben = leben - 1", "leben = leben - 2", "leben = leben * 2"]
+
+
+def alarmiere():
+    m = S.mon
+    if m.modus != "jagd":
+        m.modus = "suche"
+        m.zx = S.sp.x
+        m.zy = S.sp.y
+        m.warte = 0.0
+
+
+def puzzleGeloest():
+    S.geloest[S.puz] = True
+    S.puzfertig = 2.0
+
+
+def puzzleAbschluss():
+    S.zustand = "spiel"
+    anz = S.geloest.count(True)
+    S.mon.bonus += 0.15
+    if anz == 1:
+        teufel("Eine Seele frei. Und du glaubst, das war's?", 5.0)
+    elif anz == 2:
+        teufel("Zwei. Er wird wuetend.", 5.0)
+    else:
+        S.tuerauf = True
+        S.dunkel = 1.5
+        S.glitch = 1.5
+        alarmiere()
+        teufel("Die Tuer im Osten ist offen. Wie nett von mir.", 7.0)
+    if anz == 1 and not S.crashgezeigt:
+        S.crashgezeigt = True
+        S.zustand = "crash"
+        S.crashstart = S.zeit
+
+
+def puzzleEreignis(c):
+    if S.puzfertig > 0:
+        return
+    if c == 27:
+        S.zustand = "spiel"
+        return
+    p = S.puz
+    if p == 0:
+        if c == 37 and S.lopos % 3 > 0:
+            S.lopos -= 1
+        elif c == 39 and S.lopos % 3 < 2:
+            S.lopos += 1
+        elif c == 38 and S.lopos >= 3:
+            S.lopos -= 3
+        elif c == 40 and S.lopos < 6:
+            S.lopos += 3
+        elif c == 10 or c == 32:
+            druecke(S.lo, S.lopos)
+            if S.lo.count(True) == 9:
+                S.puzmsg = "Alle Seelen leuchten. Wie ... laestig."
+                puzzleGeloest()
+    elif p == 1:
+        ziffer = -1
+        if c >= 48 and c <= 57:
+            ziffer = c - 48
+        elif c >= 96 and c <= 105:
+            ziffer = c - 96
+        if ziffer >= 0 and len(S.eingabe) < 4:
+            S.eingabe = S.eingabe + str(ziffer)
+        elif c == 8 and len(S.eingabe) > 0:
+            S.eingabe = S.eingabe[:-1]
+        elif c == 10 and len(S.eingabe) == 4:
+            richtig = ""
+            for d in S.code:
+                richtig = richtig + str(d)
+            if S.eingabe == richtig:
+                S.puzmsg = "Korrekt. Ich hasse dich."
+                puzzleGeloest()
+            else:
+                S.versuche += 1
+                S.eingabe = ""
+                S.puzfehler = 1.0
+                S.glitch = 0.6
+                alarmiere()
+                S.puzmsg = "FALSCH. Das hat er gehoert."
+                teufel("FALSCH.", 4.0)
+    else:
+        if c == 38 or c == 40:
+            S.fixzeile = 1 - S.fixzeile
+        elif c == 37:
+            S.fix[S.fixzeile] = (S.fix[S.fixzeile] - 1) % 4
+        elif c == 39:
+            S.fix[S.fixzeile] = (S.fix[S.fixzeile] + 1) % 4
+        elif c == 10 or c == 32:
+            n = simuliere(S.fix[0], S.fix[1])
+            if n == 3 and S.fix == [1, 1]:
+                S.puzmsg = "Das Monster jagt genau 3 Mal. Die Tuer geht auf."
+                puzzleGeloest()
+            elif n >= 50:
+                S.puzmsg = "ENDLOSSCHLEIFE! Alles friert ein..."
+                S.puzfehler = 1.5
+                S.glitch = 1.5
+                alarmiere()
+                teufel("Endlosschleife. Das war laut.", 4.0)
+            else:
+                S.puzmsg = "Das Monster jagt " + str(n) + " Mal. Es sollten 3 sein."
+
+
+def nameEreignis(c):
+    if c == 10:
+        if len(S.nameeingabe) == 0:
+            return
+        antwort = S.nameeingabe.lower().strip()
+        if antwort == "niemand":
+            S.namemsg = "Niemand also. Wie praktisch."
+            starteEnde()
+        else:
+            S.nameversuche += 1
+            S.nameeingabe = ""
+            S.glitch = 0.6
+            if S.nameversuche >= 3:
+                S.namemsg = "Schon gut. Geh."
+                starteEnde()
+            elif S.nameversuche == 1:
+                S.namemsg = "Luege."
+            else:
+                S.namemsg = "Nein. Versuch es noch einmal."
+    elif c == 8:
+        if len(S.nameeingabe) > 0:
+            S.nameeingabe = S.nameeingabe[:-1]
+    elif len(S.nameeingabe) < 16:
+        if c >= 65 and c <= 90:
+            S.nameeingabe = S.nameeingabe + chr(c).lower()
+        elif c >= 48 and c <= 57:
+            S.nameeingabe = S.nameeingabe + chr(c)
+        elif c == 32:
+            S.nameeingabe = S.nameeingabe + " "
+
+
+def starteEnde():
+    S.zustand = "ende"
+    S.endstart = S.zeit
+
+
+def starteIntro():
+    neuesSpiel()
+    S.zustand = "intro"
+    S.introstart = S.zeit
+
+
+def bootFertig():
+    return S.zeit - S.bootstart > len(BOOT) * 0.5
+
+
+def menuWahl():
+    i = S.menu
+    if i == 0:
+        starteIntro()
+    elif i == 1:
+        S.menumsg = "LAUTSTAERKE: [#######---]  Hier gibt es nichts einzustellen."
+    else:
+        S.quit += 1
+        if S.quit == 1:
+            S.menumsg = "Du kannst nicht gehen."
+        elif S.quit == 2:
+            S.menumsg = "Das Fenster reagiert nicht mehr. (Nur Spass. Oder?)"
+            S.glitch = 1.2
+        else:
+            S.menumsg = "Na gut. Dann spielen wir eben."
+            starteIntro()
+
+
+def ereignis(c):
+    z = S.zustand
+    if z == "boot":
+        if not bootFertig():
+            if c == 10 or c == 32:
+                S.bootstart = S.bootstart - 100.0
+        else:
+            if c == 38 or c == 87:
+                S.menu = (S.menu - 1) % 3
+            elif c == 40 or c == 83:
+                S.menu = (S.menu + 1) % 3
+            elif c == 10 or c == 32:
+                menuWahl()
+    elif z == "intro":
+        if c == 10 or c == 32:
+            S.zustand = "spiel"
+            teufel("Hallo. Ich habe auf dich gewartet.", 6.0)
+    elif z == "spiel":
+        if c == 69:
+            benutzen()
+        elif c == 80 or c == 27:
+            S.zustand = "pause"
+    elif z == "pause":
+        if c == 80 or c == 27 or c == 10:
+            S.zustand = "spiel"
+    elif z == "lesen":
+        if c == 69 or c == 27 or c == 10 or c == 32:
+            S.zustand = "spiel"
+    elif z == "puzzle":
+        puzzleEreignis(c)
+    elif z == "name":
+        nameEreignis(c)
+    elif z == "tot":
+        if S.totzeit > 2.6 and (c == 10 or c == 32):
+            respawn()
+    elif z == "ende":
+        if S.zeit - S.endstart > 12.0 and c == 82:
+            starteIntro()
+
+
+# ---------------------------------------------------------------
+#  Effekte und Zeitsteuerung
+# ---------------------------------------------------------------
+def lichtUpdate(dt):
+    S.flackerzeit -= dt
+    if S.flackerzeit <= 0:
+        f = 1.0
+        if S.gefahr > 0.5:
+            f = 0.4
+        S.flackerzeit = uniform(3.0, 9.0) * f
+        S.flackerdauer = uniform(0.15, 0.6)
+    if S.dunkel > 0:
+        S.dunkel -= dt
+        S.licht = 0.03
+    elif S.flackerdauer > 0:
+        S.flackerdauer -= dt
+        S.licht = uniform(0.1, 1.0)
+    else:
+        S.licht = 0.95 + random() * 0.05
+
+
+def effekteUpdate(dt):
+    if S.glitch > 0:
+        S.glitch -= dt
+    if S.shake > 0:
+        S.shake = max(0.0, S.shake - 20.0 * dt)
+
+
+def hinweisCheck():
+    if not S.hinweis and S.spielzeit > 75.0 and S.geloest.count(True) == 0:
+        S.hinweis = True
+        teufel("Suche die leuchtenden Terminals.", 6.0)
+
+
+# ---------------------------------------------------------------
+#  3D-Ansicht
+# ---------------------------------------------------------------
+def lichtAt(d, kam):
+    cone = 1.0 - abs(kam) / 0.7
+    if cone < 0:
+        cone = 0.0
+    weite = 2.6 + 8.0 * cone
+    li = 1.0 - d / weite
+    if li < 0:
+        li = 0.0
+    li = li * li
+    li = li * (0.25 + 0.75 * cone) + 0.045
+    nah = 1.0 - d / 1.6
+    if nah > 0:
+        li += nah * 0.25
+    li = li * S.licht
+    if li > 1.0:
+        li = 1.0
+    return li
+
+
+def projiziere(x, y):
+    sp = S.sp
+    dx = cos(sp.w)
+    dy = sin(sp.w)
+    plx = -dy * FOV
+    ply = dx * FOV
+    sx = x - sp.x
+    sy = y - sp.y
+    inv = 1.0 / (plx * dy - dx * ply)
+    tx = inv * (dy * sx - dx * sy)
+    ty = inv * (-ply * sx + plx * sy)
+    return tx, ty
+
+
+def zeichne3D(bg):
+    sp = S.sp
+    dx = cos(sp.w)
+    dy = sin(sp.w)
+    plx = -dy * FOV
+    ply = dx * FOV
+    px = sp.x
+    py = sp.y
+    eye = sp.augen
+    hor = int(H / 2.0 + S.bob)
+    lf = 0.5 + 0.5 * S.licht
+    for i in range(6):
+        y0 = int(hor * i / 6.0)
+        y1 = int(hor * (i + 1) / 6.0)
+        b = int((5 + 9 * (i / 6.0)) * lf)
+        rechteck(bg, 0, y0, W, y1 + 1, (b, b, b + 4))
+    for i in range(8):
+        y0 = hor + int((H - hor) * i / 8.0)
+        y1 = hor + int((H - hor) * (i + 1) / 8.0)
+        b = int((7 + 24 * (i / 8.0)) * (0.4 + 0.6 * S.licht))
+        rechteck(bg, 0, y0, W, y1 + 1, (b, b + 1, b))
+    kreis(bg, W // 2, H + 80, 260, (255, 240, 200), 16 * S.licht)
+
+    chase = S.mon.modus == "jagd"
+    for col in range(N):
+        kam = 2.0 * col / N - 1.0
+        rx = dx + plx * kam
+        ry = dy + ply * kam
+        mx = int(px)
+        my = int(py)
+        if rx != 0:
+            ddx = abs(1.0 / rx)
+        else:
+            ddx = 1e30
+        if ry != 0:
+            ddy = abs(1.0 / ry)
+        else:
+            ddy = 1e30
+        if rx < 0:
+            sx = -1
+            sdx = (px - mx) * ddx
+        else:
+            sx = 1
+            sdx = (mx + 1.0 - px) * ddx
+        if ry < 0:
+            sy = -1
+            sdy = (py - my) * ddy
+        else:
+            sy = 1
+            sdy = (my + 1.0 - py) * ddy
+        seite = 0
+        zaehler = 0
+        t = "#"
+        while True:
+            if sdx < sdy:
+                sdx += ddx
+                mx += sx
+                seite = 0
+            else:
+                sdy += ddy
+                my += sy
+                seite = 1
+            zaehler += 1
+            t = tile(mx, my)
+            if t == "#" or t == "X" or zaehler > 60:
+                break
+        if seite == 0:
+            d = sdx - ddx
+            wx = py + d * ry
+        else:
+            d = sdy - ddy
+            wx = px + d * rx
+        if d < 0.05:
+            d = 0.05
+        zbuf[col] = d
+        h = int(H / d)
+        top = hor - int(h * (1.0 - eye))
+        bottom = hor + int(h * eye)
+        li = lichtAt(d, kam)
+        fr = wx - int(wx)
+        blut = False
+        if t == "X":
+            if fr < 0.10 or fr > 0.90:
+                base = (78, 80, 95)
+            elif S.tuerauf:
+                base = (50, 190, 105)
+            else:
+                base = (170, 35, 35)
+            li = max(li, 0.5 + 0.15 * sin(S.zeit * 4.0))
+        else:
+            v = (mx * 7 + my * 13) % 11
+            if v == 0:
+                base = (125, 50, 50)
+                blut = True
+            elif v < 4:
+                base = (88, 95, 112)
+            else:
+                base = (102, 106, 122)
+        f = li
+        if seite == 1:
+            f = f * 0.8
+        r = base[0] * f
+        g = base[1] * f
+        b = base[2] * f
+        if chase:
+            r = r * 1.35
+            g = g * 0.8
+            b = b * 0.8
+        x0 = col * STEP
+        x1 = x0 + STEP
+        yt = max(0, top)
+        yb = min(H, bottom)
+        rechteck(bg, x0, yt, x1, yb, (r, g, b))
+        dunkel = (r * 0.45, g * 0.45, b * 0.45)
+        if t == "X":
+            if fr >= 0.10 and fr <= 0.90:
+                if abs(fr - 0.5) < 0.012:
+                    rechteck(bg, x0, yt, x1, yb, dunkel)
+                rechteck(bg, x0, top + int(h * 0.10), x1, top + int(h * 0.20), (r * 1.4, g * 1.4, b * 1.4))
+                if not S.tuerauf and fr > 0.40 and fr < 0.60:
+                    lc = max(li, 0.55)
+                    rechteck(bg, x0, top + int(h * 0.45), x1, top + int(h * 0.62), (230 * lc, 190 * lc, 60 * lc))
+        elif DETAIL > 0 and d < 7.5:
+            zeilen = 5
+            for k in range(1, zeilen):
+                yy = top + int(h * k / float(zeilen))
+                if yy >= 0 and yy < H:
+                    rechteck(bg, x0, yy, x1, yy + 1, dunkel)
+            for k in range(zeilen):
+                off = 0.0
+                if k % 2 == 1:
+                    off = 0.25
+                q = (fr + off) % 0.5
+                if q < 0.014 or q > 0.486:
+                    y0 = top + int(h * k / float(zeilen))
+                    y1 = top + int(h * (k + 1) / float(zeilen))
+                    rechteck(bg, x0, max(0, y0), x1, min(H, y1), dunkel)
+            if blut and sin(wx * 29.0) > 0.55:
+                laenge = 0.12 + 0.4 * abs(sin(wx * 13.0 + 1.0))
+                rechteck(bg, x0, top + int(h * 0.08), x1, top + int(h * (0.08 + laenge)), (130 * f, 10 * f, 10 * f))
+        rechteck(bg, x0, max(0, bottom - int(h * 0.10)), x1, yb, (r * 0.5, g * 0.5, b * 0.5))
+        if t != "X":
+            rechteck(bg, x0, yt, x1, max(yt, top + int(h * 0.05)), (r * 0.6, g * 0.6, b * 0.6))
+
+
+def monsterSegmente(u):
+    m = S.mon
+    t = m.t
+    tempo = 2.5
+    if m.modus == "jagd":
+        tempo = 7.0
+    sw = sin(t * tempo)
+    u = u - 0.012 * sin(t * 1.3)
+    d = abs(u - 0.5)
+    seg = []
+    # Arme (lang, mit Krallen)
+    for sgn in (-1, 1):
+        ax = 0.5 + sgn * (0.265 + 0.012 * sw)
+        ex = ax + sgn * 0.012
+        if abs(u - ax) < 0.030:
+            seg.append((0.23, 0.58, (24, 23, 32), False))
+        if abs(u - ex) < 0.022:
+            seg.append((0.58, 0.93, (28, 27, 38), False))
+        if abs(u - ex) < 0.040:
+            seg.append((0.92, 0.99, (150, 145, 135), False))
+        for k in (-1, 0, 1):
+            if abs(u - (ex + k * 0.026)) < 0.006:
+                seg.append((0.99, 1.06, (170, 165, 150), False))
+    # Beine
+    for sgn in (-1, 1):
+        lx = 0.5 + sgn * 0.075 + 0.018 * sw * sgn
+        if abs(u - lx) < 0.022:
+            seg.append((0.78, 0.99, (42, 40, 50), False))
+        if abs(u - lx) < 0.040:
+            seg.append((0.97, 1.0, (30, 28, 36), False))
+    # Zerfetzter Mantel
+    if d < 0.20:
+        top = 0.20 + d * 0.55
+        bot = 0.84 + 0.035 * sin(u * 55.0 + 1.0) + 0.02 * sin(u * 23.0)
+        fold = 0.75 + 0.25 * sin(u * 46.0)
+        seg.append((top, bot, (40 * fold, 38 * fold, 54 * fold), False))
+        if abs(sin(u * 31.0)) < 0.05:
+            seg.append((0.34, 0.56, (150, 15, 15), True))
+    if d < 0.045:
+        seg.append((0.17, 0.24, (30, 28, 36), False))
+    # Kopf: Maske mit Kinn, Rissen, Augen, Zaehnen
+    a = 0.115
+    if d < a:
+        q = d / a
+        hh = 0.105 * sqrt(1.0 - q * q)
+        sh = 1.0 - q * 0.45
+        mask = (208 * sh, 200 * sh, 182 * sh)
+        seg.append((0.105 - hh, 0.105 + hh, mask, False))
+        if d < 0.06:
+            seg.append((0.17, 0.17 + 0.075 * (1.0 - d / 0.06), mask, False))
+        if abs(u - 0.465) < 0.0035:
+            seg.append((0.0, 0.10, (40, 34, 30), False))
+        if abs(u - 0.56) < 0.0035:
+            seg.append((0.06, 0.15, (40, 34, 30), False))
+        fl = 0.8 + 0.2 * sin(t * 9.0)
+        for sgn in (-1, 1):
+            ex = 0.5 + sgn * 0.047
+            if abs(u - ex) < 0.028:
+                seg.append((0.075 + abs(u - ex) * 0.5, 0.125, (8, 0, 0), False))
+            if abs(u - ex) < 0.016:
+                seg.append((0.086, 0.114, (255 * fl, 30, 30), True))
+        if d < 0.065:
+            seg.append((0.150, 0.174, (6, 0, 0), False))
+            if int((u - 0.4) * 170.0) % 2 == 0:
+                seg.append((0.144, 0.153, (225, 220, 200), False))
+                seg.append((0.171, 0.180, (225, 220, 200), False))
+    # Hoerner
+    s = (d - 0.06) / 0.14
+    if s >= 0.0 and s <= 1.0:
+        vc = 0.03 - 0.20 * s * (1.2 - 0.4 * s)
+        th = 0.022 * (1.0 - s) + 0.006
+        seg.append((vc - th, vc + th, (56, 50, 48), False))
+    return seg
+
+
+def terminalSegmente(obj, u):
+    gel = S.geloest[obj[3]]
+    t = S.zeit
+    p = 0.75 + 0.25 * sin(t * 4.0 + obj[1])
+    seg = []
+    if u < 0.10 or u > 0.90:
+        return seg
+    if u < 0.18 or u > 0.82:
+        seg.append((0.14, 1.0, (24, 22, 46), False))
+        if u < 0.125 or u > 0.875:
+            if gel:
+                sc = (60, 220, 130)
+            else:
+                sc = (230, 50, 220)
+            seg.append((0.20, 0.96, sc, True))
+        return seg
+    seg.append((0.10, 1.0, (30, 32, 60), False))
+    # Leuchtschild oben
+    k = int((u - 0.18) * 26.0) % 2
+    if gel:
+        if k == 0:
+            mc = (60, 230, 130)
+        else:
+            mc = (40, 160, 90)
+    else:
+        if k == 0:
+            mc = (235, 45, 225)
+        else:
+            mc = (45, 225, 235)
+    seg.append((0.11, 0.22, mc, True))
+    seg.append((0.215, 0.235, (14, 14, 24), False))
+    # Bildschirm mit gefangener Seele
+    if u > 0.22 and u < 0.78:
+        seg.append((0.25, 0.62, (14, 14, 22), False))
+        if u > 0.25 and u < 0.75:
+            if gel:
+                bgc = (6, 46 * p, 24 * p)
+            else:
+                bgc = (60 * p, 6, 14 * p)
+            seg.append((0.28, 0.59, bgc, True))
+            su = (u - 0.25) / 0.5
+            gdx = (su - 0.5) / 0.30
+            if abs(gdx) < 1.0:
+                hh = sqrt(1.0 - gdx * gdx)
+                wipp = 0.0
+                if gel:
+                    wipp = -0.03 * sin(t * 3.0)
+                top = 0.43 - 0.11 * hh + wipp
+                bot = 0.48 + 0.02 * sin(su * 28.0 + t * 4.0) + wipp
+                if gel:
+                    gc = (190, 255, 215)
+                else:
+                    gc = (235, 235, 255)
+                seg.append((top, bot, gc, True))
+                if abs(su - 0.40) < 0.045 or abs(su - 0.60) < 0.045:
+                    seg.append((0.40 + wipp, 0.44 + wipp, (15, 15, 30), False))
+            if (not gel) and (su * 12.0) % 1.0 < 0.22:
+                seg.append((0.28, 0.59, (46, 48, 58), False))
+            band = 0.28 + ((t * 0.35) % 1.0) * 0.28
+            seg.append((band, band + 0.012, (0, 0, 0), False))
+    # Bedienfeld
+    seg.append((0.64, 0.73, (78, 80, 100), False))
+    if abs(u - 0.36) < 0.010:
+        seg.append((0.59, 0.65, (60, 60, 64), False))
+    if abs(u - 0.36) < 0.028:
+        seg.append((0.55, 0.60, (225, 40, 40), False))
+    if abs(u - 0.56) < 0.030:
+        seg.append((0.66, 0.70, (40, 200, 255), True))
+    if abs(u - 0.67) < 0.030:
+        seg.append((0.66, 0.70, (255, 215, 60), True))
+    # Muenzeinwurf
+    if u > 0.44 and u < 0.56:
+        seg.append((0.80, 0.92, (18, 18, 24), False))
+        if int(t * 2.0) % 2 == 0:
+            seg.append((0.84, 0.86, (255, 210, 60), True))
+        else:
+            seg.append((0.84, 0.86, (120, 100, 30), False))
+    seg.append((0.96, 1.0, (14, 14, 20), False))
+    return seg
+
+
+def notizSegmente(obj, u):
+    gel = obj[4]
+    t = S.zeit
+    seg = []
+    pap = (238, 230, 205)
+    tinte = (80, 70, 60)
+    if gel:
+        pap = (150, 144, 124)
+    neig = (u - 0.5) * 0.05 + 0.02 * sin(t * 1.5 + obj[1])
+    top = 0.18 + neig
+    if u > 0.24 and u < 0.76:
+        ecke = 0.0
+        if u > 0.66:
+            ecke = (u - 0.66) * 1.2
+        seg.append((top + ecke, 0.62 + neig, pap, True))
+        if u > 0.66:
+            seg.append((top + ecke, top + ecke * 2.0, (200, 190, 160), True))
+        for k in range(5):
+            lang = 0.40 - ((k * 11 + obj[3] * 5) % 4) * 0.06
+            if u > 0.30 and u < 0.30 + lang:
+                y = top + 0.10 + k * 0.07
+                seg.append((y, y + 0.012, tinte, False))
+    if abs(u - 0.5) < 0.030:
+        if gel:
+            pc = (110, 30, 30)
+        else:
+            pc = (190, 30, 30)
+        seg.append((top - 0.03, top + 0.03, pc, True))
+    if abs(u - 0.5) < 0.020:
+        seg.append((0.62 + neig, 0.95, (58, 44, 32), False))
+    if u > 0.34 and u < 0.66:
+        seg.append((0.95, 1.0, (40, 30, 24), False))
+    return seg
+
+
+def segmente(art, obj, u):
+    if art == "m":
+        return monsterSegmente(u)
+    if obj[0] == "term":
+        return terminalSegmente(obj, u)
+    return notizSegmente(obj, u)
+
+
+def streifen(bg, art, obj, tx, ty):
+    scr = int(W / 2.0 * (1.0 + tx / ty))
+    size = int(H / ty)
+    if size < 2:
+        return
+    bodenY = int(H / 2.0 + S.bob + size * S.sp.augen)
+    if art == "m":
+        hoehe = size * 1.1
+        breite = int(size * 0.8)
+    elif obj[0] == "term":
+        hoehe = size * 0.8
+        breite = int(size * 0.7)
+    else:
+        hoehe = size * 0.9
+        breite = int(size * 0.5)
+    if breite < 2:
+        return
+    sw = STEP
+    if size > 260:
+        sw = 6
+    oben = bodenY - int(hoehe)
+    start = scr - breite // 2
+    ende = min(start + breite, W)
+    xx = start
+    if xx < 0:
+        xx = xx + ((0 - xx) // STEP) * STEP
+    while xx < ende:
+        c = xx // STEP
+        if c >= 0 and c < N and ty < zbuf[c]:
+            u = (xx - start) / float(breite)
+            li = lichtAt(ty, 2.0 * xx / W - 1.0)
+            for seg in segmente(art, obj, u):
+                f = li
+                if seg[3]:
+                    f = max(li, 0.5 * max(0.2, 1.0 - ty / 12.0))
+                col = seg[2]
+                rechteck(bg, xx, oben + int(seg[0] * hoehe), xx + sw, oben + int(seg[1] * hoehe),
+                         (col[0] * f, col[1] * f, col[2] * f))
+        xx += sw
+
+
+def zeichneSprites(bg):
+    liste = []
+    for o in S.objekte:
+        tx, ty = projiziere(o[1], o[2])
+        if ty > 0.2:
+            liste.append((ty, tx, "o", o))
+    m = S.mon
+    tx, ty = projiziere(m.x, m.y)
+    if ty > 0.2:
+        liste.append((ty, tx, "m", m))
+    liste.sort(key = lambda a: a[0])
+    liste.reverse()
+    for e in liste:
+        streifen(bg, e[2], e[3], e[1], e[0])
+
+
+def zeichneRand(bg, col, a0, dick):
+    for i in range(6):
+        a = cl(a0 - i * a0 / 6.0)
+        b = i * dick
+        rechteck(bg, 0, b, W, b + dick, col, a)
+        rechteck(bg, 0, H - b - dick, W, H - b, col, a)
+        rechteck(bg, b, 0, b + dick, H, col, a)
+        rechteck(bg, W - b - dick, 0, W - b, H, col, a)
+
+
+def zeichneGlitch(bg, staerke):
+    for i in range(int(4 + staerke * 8)):
+        y = randint(0, H - 1)
+        h = randint(2, 14)
+        rechteck(bg, 0, y, W, y + h, (randint(0, 255), randint(0, 80), randint(0, 80)), randint(30, 90))
+    if random() < 0.5:
+        text(bg, choice(["ER SIEHT DICH", "LAUF", "HINTER DIR", "DU", "NICHT UMDREHEN"]), randint(20, W - 200),
+             randint(40, H - 40), randint(20, 50), ROT, randint(40, 120))
+
+
+def zeichneWelt(bg):
+    zeichne3D(bg)
+    zeichneSprites(bg)
+    # Vignette
+    for i in range(8):
+        a = cl(120 - i * 14)
+        b = i * 14
+        rechteck(bg, 0, b, W, b + 14, (0, 0, 0), a)
+        rechteck(bg, 0, H - b - 14, W, H - b, (0, 0, 0), a)
+        rechteck(bg, b, 0, b + 14, H, (0, 0, 0), a)
+        rechteck(bg, W - b - 14, 0, W - b, H, (0, 0, 0), a)
+    # Gefahr (Herzschlag)
+    if S.gefahr > 0.15 and S.licht > 0.1:
+        puls = 0.5 + 0.5 * sin(S.zeit * (4.0 + 8.0 * S.gefahr))
+        zeichneRand(bg, (200, 0, 0), S.gefahr * puls * 150.0, 18)
+    # Filmkorn
+    for i in range(18):
+        x = randint(0, W - 3)
+        y = randint(0, H - 3)
+        rechteck(bg, x, y, x + 2, y + 2, (200, 200, 200), 35)
+    zeichneHud(bg)
+    if S.glitch > 0:
+        zeichneGlitch(bg, min(1.0, S.glitch))
+
+
+def zeichneHud(bg):
+    sp = S.sp
+    text(bg, "SEELEN " + str(S.geloest.count(True)) + "/3", 14, 26, 18, (230, 230, 240))
+    if S.mon.modus == "jagd" and int(S.zeit * 4.0) % 2 == 0:
+        text(bg, "RENN!", W / 2.0, 34, 28, ROT, 255, True)
+    # Ausdauer
+    rechteck(bg, 14, H - 26, 134, H - 18, (255, 255, 255), 40)
+    if sp.erschoepft:
+        sc = (255, 60, 60)
+    else:
+        sc = (230, 230, 240)
+    rechteck(bg, 14, H - 26, 14 + 1.2 * sp.stamina, H - 18, sc, 200)
+    if sp.augen < 0.42:
+        text(bg, "GEDUCKT", 14, H - 32, 12, (160, 170, 200))
+    # Hinweis
+    if S.nah is not None:
+        if S.nah[0] == "note":
+            s = "[E] Notiz lesen"
+        elif S.geloest[S.nah[3]]:
+            s = "Seele befreit"
+        else:
+            s = "[E] Terminal benutzen"
+        text(bg, s, W / 2.0, H - 80, 18, (230, 230, 240), 230, True)
+    # Teufel
+    if S.tmsgzeit > 0:
+        s = getippt(S.tmsg, S.tmsgstart, 28.0)
+        a = min(1.0, S.tmsgzeit / 1.0) * 255
+        if random() < 0.06:
+            a = a * 0.4
+        text(bg, s, W / 2.0, H - 50, 20, ROT, a, True)
+
+
+def zeichneLesen(bg):
+    rechteck(bg, 0, 0, W, H, (0, 0, 0), 120)
+    rechteck(bg, 140, 50, W - 140, H - 60, (225, 218, 190), 255)
+    rechteck(bg, 146, 56, W - 146, H - 66, (205, 198, 170), 255)
+    y = 100
+    for z in S.lesezeilen:
+        text(bg, z, 170, y, 18, (40, 30, 25))
+        y += 28
+    text(bg, "[E] weglesen", W / 2.0, H - 80, 14, (110, 90, 70), 255, True)
+    zeichneGefahrLeiste(bg)
+
+
+def zeichneGefahrLeiste(bg):
+    if S.gefahr > 0.0:
+        col = (255, 180, 60)
+        if S.mon.modus == "jagd":
+            col = ROT
+        rechteck(bg, W / 2.0 - 100, 8, W / 2.0 - 100 + 200 * S.gefahr, 16, col, 220)
+        text(bg, "ER KOMMT!" if S.mon.modus == "jagd" else "ER IST IN DER NAEHE", W / 2.0, 34, 14, col, 255, True)
+
+
+# ---------------------------------------------------------------
+#  Bildschirme
+# ---------------------------------------------------------------
+def scanlines(bg, a):
+    for y in range(0, H, 6):
+        rechteck(bg, 0, y, W, y + 1, (0, 0, 0), a)
+
+
+def zeichneBoot(bg):
+    bg.clear(Color(2, 6, 3))
+    y = 60
+    for i in range(len(BOOT)):
+        if S.zeit - S.bootstart > i * 0.5:
+            s = getippt(BOOT[i][0], S.bootstart + i * 0.5, 50.0)
+            text(bg, s, 40, y, 18, BOOT[i][1])
+        y += 28
+    if bootFertig():
+        text(bg, "SEELENAUTOMAT", W / 2.0, 330 - 80, 40, GRUEN, 255, True)
+        yy = 290
+        for i in range(3):
+            if i == S.menu:
+                text(bg, "> " + MENUPUNKTE[i] + " <", W / 2.0, yy, 24, (255, 230, 90), 255, True)
+            else:
+                text(bg, MENUPUNKTE[i], W / 2.0, yy, 22, (0, 160, 80), 255, True)
+            yy += 34
+        if S.menumsg != "":
+            text(bg, S.menumsg, W / 2.0, H - 40, 16, ROT, 255, True)
+    elif int(S.zeit * 2.0) % 2 == 0:
+        text(bg, "_", 40, y, 18, GRUEN)
+    scanlines(bg, 40)
+    if S.glitch > 0:
+        zeichneGlitch(bg, min(1.0, S.glitch))
+
+
+def zeichneIntro(bg):
+    bg.clear(Color(2, 2, 2))
+    zeilen = ["Du bist in meinem Automaten.",
+              "Drei Seelen sitzen in den Terminals fest.",
+              "Befreie sie - wenn du kannst.",
+              "",
+              "Er hoert dich, wenn du rennst.",
+              "",
+              "W/S/A/D gehen   PFEILE links/rechts drehen",
+              "SHIFT rennen    C ducken    E benutzen",
+              "",
+              "ENTER = beginnen"]
+    y = 70
+    t0 = S.introstart
+    for i in range(len(zeilen)):
+        s = getippt(zeilen[i], t0 + i * 0.9, 30.0)
+        col = (210, 210, 220)
+        if i < 3:
+            col = ROT
+        text(bg, s, W / 2.0, y, 20, col, 255, True)
+        y += 34
+    scanlines(bg, 30)
+
+
+def zeichneCrash(bg):
+    t = S.zeit - S.crashstart
+    bg.clear(Color(0, 0, 0))
+    pfad = "/home/spieler/seelenautomat.py"
+    zeilen = ["Traceback (most recent call last):",
+              '  File "' + pfad + '", line 666, in <module>',
+              "    seele = spieler.seele",
+              "AttributeError: 'Spieler' object has no attribute 'seele'",
+              "",
+              ">>> Verbindung zum Teufel verloren",
+              ">>> Versuche neu zu verbinden ...",
+              ">>> Verbindung hergestellt.",
+              ">>> Er war nie weg."]
+    y = 50
+    for i in range(len(zeilen)):
+        s = getippt(zeilen[i], i * 0.35, 60.0 + 0 * t)
+        col = (220, 220, 220)
+        if i >= 5:
+            col = ROT
+        text(bg, s, 30, y, 16, col)
+        y += 26
+    if t > 4.2:
+        S.zustand = "spiel"
+        S.glitch = 1.5
+        S.dunkel = 1.0
+        teufel("Ups. Das war ich.", 5.0)
+
+
+def puzzleRahmen(bg, titel):
+    bg.clear(Color(2, 8, 4))
+    linie(bg, 12, 12, W - 12, 12, GRUEN, 3, 160)
+    linie(bg, W - 12, 12, W - 12, H - 12, GRUEN, 3, 160)
+    linie(bg, W - 12, H - 12, 12, H - 12, GRUEN, 3, 160)
+    linie(bg, 12, H - 12, 12, 12, GRUEN, 3, 160)
+    text(bg, titel, W / 2.0, 54, 28, GRUEN, 255, True)
+
+
+def puzzleFuss(bg, hilfe):
+    text(bg, hilfe, W / 2.0, H - 70, 14, (0, 150, 80), 255, True)
+    if S.puzmsg != "":
+        col = ROT
+        if S.puzfertig > 0:
+            col = (255, 230, 90)
+        text(bg, S.puzmsg, W / 2.0, H - 100, 17, col, 255, True)
+    if S.tmsgzeit > 0:
+        text(bg, getippt(S.tmsg, S.tmsgstart, 28.0), W / 2.0, H - 34, 18, ROT, 255, True)
+    if S.puzfertig > 0:
+        text(bg, "SEELE BEFREIT", W / 2.0, 90, 20, (255, 230, 90), 255, True)
+    scanlines(bg, 45)
+    zeichneGefahrLeiste(bg)
+    if S.glitch > 0:
+        zeichneGlitch(bg, min(1.0, S.glitch))
+
+
+def zeichneGeist(bg, cx, cy, r, col, a, hell):
+    kreis(bg, cx, cy - r * 0.2, r, col, a)
+    rechteck(bg, cx - r, cy - r * 0.2, cx + r, cy + r * 0.8, col, a)
+    for i in range(3):
+        kreis(bg, cx - r * 0.667 + i * r * 0.667, cy + r * 0.8, r * 0.34, col, a)
+    if hell:
+        kreis(bg, cx - r * 0.38, cy - r * 0.3, r * 0.17, (20, 20, 40))
+        kreis(bg, cx + r * 0.38, cy - r * 0.3, r * 0.17, (20, 20, 40))
+        kreis(bg, cx, cy + r * 0.2, r * 0.16, (20, 20, 40))
+    else:
+        linie(bg, cx - r * 0.55, cy - r * 0.3, cx - r * 0.2, cy - r * 0.3, (10, 10, 20), 2)
+        linie(bg, cx + r * 0.2, cy - r * 0.3, cx + r * 0.55, cy - r * 0.3, (10, 10, 20), 2)
+
+
+def zeichnePuzzle(bg):
+    p = S.puz
+    if p == 0:
+        puzzleRahmen(bg, "SEELENSCHALTER")
+        text(bg, "Bringe alle Seelen zum Leuchten. Jeder Schalter dreht auch seine Nachbarn.", W / 2.0, 84, 13,
+             (0, 170, 90), 255, True)
+        x0 = W / 2.0 - 105
+        y0 = 125
+        for i in range(9):
+            cx = x0 + (i % 3) * 70 + 35
+            cy = y0 + (i // 3) * 70 + 35
+            if S.lo[i]:
+                kreis(bg, cx, cy, 36, (255, 220, 90), 40)
+                zeichneGeist(bg, cx, cy - 2, 22, (255, 232, 130), 255, True)
+            else:
+                zeichneGeist(bg, cx, cy - 2, 20, (40, 44, 58), 255, False)
+        k = S.lopos
+        cx = x0 + (k % 3) * 70 + 35
+        cy = y0 + (k // 3) * 70 + 35
+        linie(bg, cx - 32, cy - 32, cx + 32, cy - 32, WEISS, 2)
+        linie(bg, cx + 32, cy - 32, cx + 32, cy + 32, WEISS, 2)
+        linie(bg, cx + 32, cy + 32, cx - 32, cy + 32, WEISS, 2)
+        linie(bg, cx - 32, cy + 32, cx - 32, cy - 32, WEISS, 2)
+        puzzleFuss(bg, "PFEILE bewegen   ENTER schalten   ESC zurueck")
+    elif p == 1:
+        puzzleRahmen(bg, "ZAHLENSCHLOSS")
+        text(bg, "Vier Ziffern. Die Hinweise liegen im Gebaeude verstreut.", W / 2.0, 90, 14, (0, 170, 90), 255, True)
+        for i in range(4):
+            x = W / 2.0 - 150 + i * 80
+            col = GRUEN
+            if S.puzfehler > 0:
+                col = ROT
+            linie(bg, x, 140, x + 60, 140, col, 2)
+            linie(bg, x + 60, 140, x + 60, 230, col, 2)
+            linie(bg, x + 60, 230, x, 230, col, 2)
+            linie(bg, x, 230, x, 140, col, 2)
+            if i < len(S.eingabe):
+                text(bg, S.eingabe[i], x + 30, 205, 54, (255, 230, 90), 255, True)
+        text(bg, "Versuche: " + str(S.versuche), W / 2.0, 270, 14, (0, 140, 80), 255, True)
+        puzzleFuss(bg, "ZIFFERN tippen   ENTER bestaetigen   ESC zurueck   (falsche Codes sind LAUT)")
+    else:
+        puzzleRahmen(bg, "TEUFELSCODE")
+        text(bg, "Repariere den Code: Das Monster soll genau 3 Mal jagen und die Schleife muss enden.",
+             W / 2.0, 84, 13, (0, 170, 90), 255, True)
+        zeilen = ["# Das Monster soll genau 3 Mal jagen.",
+                  "leben = 3",
+                  COND[S.fix[0]],
+                  "    monster.jagt(spieler)",
+                  "    " + STEPS[S.fix[1]],
+                  "tuer.oeffnen()"]
+        y = 140
+        for i in range(len(zeilen)):
+            text(bg, str(i + 1), 100, y, 20, (0, 110, 60))
+            col = (210, 220, 215)
+            if i == 0:
+                col = (110, 130, 120)
+            if i == 2 or i == 4:
+                idx = 0
+                if i == 4:
+                    idx = 1
+                if idx == S.fixzeile:
+                    rechteck(bg, 128, y - 20, W - 110, y + 8, (255, 230, 90), 40)
+                    col = (255, 230, 90)
+                else:
+                    col = (140, 255, 190)
+            text(bg, zeilen[i], 140, y, 20, col)
+            y += 34
+        puzzleFuss(bg, "HOCH/RUNTER Zeile   LINKS/RECHTS aendern   ENTER ausfuehren   ESC zurueck")
+
+
+def zeichneName(bg):
+    bg.clear(Color(2, 2, 2))
+    text(bg, "DIE TUER FRAGT", W / 2.0, 100, 30, GRUEN, 255, True)
+    text(bg, S.namemsg, W / 2.0, 190, 20, ROT, 255, True)
+    s = S.nameeingabe
+    if int(S.zeit * 2.0) % 2 == 0:
+        s = s + "_"
+    text(bg, "> " + s, W / 2.0, 270, 28, (255, 230, 90), 255, True)
+    text(bg, "Antwort tippen, ENTER bestaetigen", W / 2.0, H - 60, 14, (120, 120, 130), 255, True)
+    scanlines(bg, 30)
+    if S.glitch > 0:
+        zeichneGlitch(bg, min(1.0, S.glitch))
+
+
+def zeichneGesicht(bg, cx, cy, r):
+    for sgn in (-1, 1):
+        for i in range(10):
+            q = i / 9.0
+            hx = cx + sgn * r * (0.45 + 0.55 * q)
+            hy = cy - r * (0.85 + 0.9 * q * (1.1 - 0.4 * q))
+            kreis(bg, hx, hy, r * (0.10 * (1.0 - q) + 0.03), (45, 40, 40))
+    for i in range(8):
+        w = r * (0.85 - i * 0.09)
+        y0 = cy + r * (0.5 + i * 0.1)
+        rechteck(bg, cx - w, y0, cx + w, y0 + r * 0.1 + 1, (205, 198, 180))
+    kreis(bg, cx, cy, r * 1.03, (60, 55, 50))
+    kreis(bg, cx, cy, r, (212, 206, 188))
+    kreis(bg, cx - r * 0.2, cy - r * 0.25, r * 0.55, (230, 225, 210), 90)
+    linie(bg, cx - r * 0.10, cy - r, cx - r * 0.22, cy - r * 0.25, (50, 40, 36), 3)
+    linie(bg, cx + r * 0.30, cy - r * 0.8, cx + r * 0.18, cy - r * 0.35, (50, 40, 36), 3)
+    for sgn in (-1, 1):
+        ex = cx + sgn * r * 0.38
+        ey = cy - r * 0.10
+        kreis(bg, ex, ey, r * 0.32, (255, 30, 30), 40)
+        kreis(bg, ex, ey, r * 0.22, (6, 0, 0))
+        kreis(bg, ex, ey, r * 0.10, (255, 30, 30))
+        kreis(bg, ex - r * 0.03, ey - r * 0.03, r * 0.03, (255, 255, 255))
+    rechteck(bg, cx - r * 0.6, cy + r * 0.35, cx + r * 0.6, cy + r * 0.62, (8, 0, 0))
+    for i in range(9):
+        x = cx - r * 0.56 + i * r * 0.14
+        rechteck(bg, x, cy + r * 0.35, x + r * 0.07, cy + r * 0.46, (232, 227, 212))
+        rechteck(bg, x + r * 0.07, cy + r * 0.52, x + r * 0.14, cy + r * 0.62, (232, 227, 212))
+
+
+def zeichneTot(bg):
+    t = S.totzeit
+    if t < 1.8:
+        bg.clear(Color(int(40 + 40 * random()), 0, 0))
+        zeichneGesicht(bg, W / 2.0 + uniform(-10, 10), H / 2.0 + uniform(-10, 10), 150 + t * 90)
+        zeichneGlitch(bg, 1.0)
+    else:
+        bg.clear(Color(0, 0, 0))
+        text(bg, "DU BIST TOT", W / 2.0, 150, 48, ROT, 255, True)
+        n = S.tode
+        if n == 1:
+            s = "Er hat dich gefunden."
+        elif n == 2:
+            s = "Schon wieder? Wie enttaeuschend."
+        else:
+            s = "Todesfaelle: " + str(n) + ". Ich bin beeindruckt."
+        text(bg, s, W / 2.0, 220, 20, (210, 210, 220), 255, True)
+        if S.totzeit > 2.6 and int(S.zeit * 2.0) % 2 == 0:
+            text(bg, "ENTER = weiter", W / 2.0, 300, 20, (255, 230, 90), 255, True)
+        scanlines(bg, 30)
+
+
+def zeichneEnde(bg):
+    bg.clear(Color(0, 0, 0))
+    t0 = S.endstart
+    m = int(S.spielzeit) // 60
+    sek = int(S.spielzeit) % 60
+    zeilen = ["Du hast alle Seelen befreit.",
+              "Und trotzdem sitzt du noch vor dem Bildschirm.",
+              "Wer hat hier eigentlich wen gespielt?",
+              "",
+              "...",
+              "",
+              "SPIEL VORBEI.",
+              "Zeit: " + ("%02d:%02d" % (m, sek)) + "    Todesfaelle: " + str(S.tode),
+              "",
+              "[R] noch einmal (ich warte)"]
+    y = 70
+    for i in range(len(zeilen)):
+        s = getippt(zeilen[i], t0 + i * 1.2, 28.0)
+        col = (210, 210, 220)
+        if i == 2 or i == 6:
+            col = ROT
+        text(bg, s, W / 2.0, y, 18, col, 255, True)
+        y += 32
+    scanlines(bg, 30)
+
+
+def zeichnePauseOverlay(bg):
+    rechteck(bg, 0, 0, W, H, (0, 0, 0), 150)
+    text(bg, "PAUSE", W / 2.0, H / 2.0, 48, WEISS, 255, True)
+    text(bg, "P = weiter", W / 2.0, H / 2.0 + 36, 16, (180, 190, 220), 255, True)
+
+
+def zeichne(bg):
+    z = S.zustand
+    if z == "boot":
+        zeichneBoot(bg)
+    elif z == "intro":
+        zeichneIntro(bg)
+    elif z == "crash":
+        zeichneCrash(bg)
+    elif z == "ende":
+        zeichneEnde(bg)
+    elif z == "puzzle":
+        zeichnePuzzle(bg)
+    elif z == "name":
+        zeichneName(bg)
+    elif z == "tot":
+        zeichneTot(bg)
+    else:
+        zeichneWelt(bg)
+        if z == "lesen":
+            zeichneLesen(bg)
+        elif z == "pause":
+            zeichnePauseOverlay(bg)
+
+
+# ---------------------------------------------------------------
+#  Start und Hauptschleife
+# ---------------------------------------------------------------
+makeGameGrid(W, H, 1, None, None, False, keyPressed = taste, keyReleased = los)
+setTitle("SEELENAUTOMAT.EXE")
+show()
+try:
+    getBg().enableAntialiasing()
+except:
+    pass
+
+neuesSpiel()
+S.zustand = "boot"
+S.bootstart = S.zeit
+letzt = System.nanoTime()
+
+while not isDisposed():
+    jetzt = System.nanoTime()
+    dt = (jetzt - letzt) / 1000000000.0
+    letzt = jetzt
+    if dt > 0.05:
+        dt = 0.05
+    S.zeit += dt
+    aufraeumen()
+    while len(EREIGNISSE) > 0:
+        ereignis(EREIGNISSE.pop(0))
+    z = S.zustand
+    if z != "pause" and z != "boot" and z != "intro" and z != "ende":
+        if S.tmsgzeit > 0:
+            S.tmsgzeit -= dt
+    if z == "spiel":
+        S.spielzeit += dt
+        spielerUpdate(dt)
+        monsterUpdate(dt)
+        lichtUpdate(dt)
+        effekteUpdate(dt)
+        hinweisCheck()
+    elif z == "lesen":
+        S.spielzeit += dt
+        monsterUpdate(dt)
+        lichtUpdate(dt)
+        effekteUpdate(dt)
+    elif z == "puzzle":
+        S.spielzeit += dt
+        monsterUpdate(dt)
+        effekteUpdate(dt)
+        if S.puzfehler > 0:
+            S.puzfehler -= dt
+        if S.puzfertig > 0:
+            S.puzfertig -= dt
+            if S.puzfertig <= 0:
+                puzzleAbschluss()
+    elif z == "tot":
+        S.totzeit += dt
+        effekteUpdate(dt)
+    elif z == "name" or z == "boot":
+        effekteUpdate(dt)
+    bg = getBg()
+    zeichne(bg)
+    refresh()
+    delay(8)
