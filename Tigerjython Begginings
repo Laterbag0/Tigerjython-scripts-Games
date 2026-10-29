@@ -1,0 +1,153 @@
+from gturtle import *
+
+def sag(text, tempo=180):
+    for wort in text.split(" "):
+        print(wort, end=" ")
+        delay(tempo)
+    print("")
+    delay(700)
+
+def code(*zeilen):
+    for z in zeilen:
+        print("      " + z)
+        delay(500)
+    delay(500)
+
+def kapitel(nr, titel):
+    print("")
+    print("=" * 40)
+    print("KAPITEL " + str(nr) + ": " + titel)
+    print("=" * 40)
+    delay(1000)
+
+kapitel(1, "Willkommen")
+sag("Hallo! Ich bringe dir TigerJython bei, und zwar mit einem Programm, das in TigerJython läuft.")
+sag("TigerJython ist eine Programmierumgebung, in der du die Sprache Python lernst.")
+sag("Ein Programm besteht aus Zeilen. Der Computer liest sie von oben nach unten, Zeile für Zeile.")
+sag("Mit dem Start-Knopf oben startest du ein Programm, so wie du es gerade getan hast.")
+
+kapitel(2, "Text ausgeben mit print")
+sag("Der wichtigste Befehl heißt print. Er schreibt Text ins Ausgabefenster, also genau hierhin.")
+sag("Der Text steht in Anführungszeichen und der Befehl hat runde Klammern. So sieht das aus:")
+code('print("Hallo Welt")')
+sag("Und das ist das Ergebnis:")
+print("Hallo Welt")
+delay(1000)
+sag("Mit Kommas kannst du mehrere Dinge in eine Zeile schreiben:")
+code('print("Ich habe", 3, "Äpfel")')
+print("Ich habe", 3, "Äpfel")
+delay(1000)
+
+kapitel(3, "Variablen")
+sag("Eine Variable ist wie eine Schachtel mit einem Namen. Du legst etwas hinein und holst es später wieder heraus.")
+code('tier = "Tiger"', "zahl = 5", "print(tier, zahl)")
+tier = "Tiger"
+zahl = 5
+print(tier, zahl)
+delay(1000)
+sag("Das Gleichheitszeichen heißt hier nicht gleich, sondern: Lege den Wert rechts in die Schachtel links.")
+sag("Du kannst den Inhalt jederzeit ändern:")
+code("zahl = zahl + 1", "print(zahl)")
+zahl = zahl + 1
+print(zahl)
+delay(1000)
+
+kapitel(4, "Rechnen")
+sag("Python kann rechnen. Plus, Minus und Mal schreibst du so: + - *")
+code("print(7 + 3)", "print(7 - 3)", "print(7 * 3)")
+print(7 + 3)
+print(7 - 3)
+print(7 * 3)
+delay(1000)
+sag("Zum Teilen nimmst du den Schrägstrich. Kommazahlen schreibst du mit Punkt:")
+code("print(9 / 2.0)")
+print(9 / 2.0)
+delay(1000)
+sag("Das Prozentzeichen liefert den Rest einer Division. So erkennst du zum Beispiel gerade Zahlen:")
+code("print(7 % 2)")
+print(7 % 2)
+delay(1000)
+
+kapitel(5, "Fragen stellen mit inputString")
+sag("Dein Programm kann dich auch etwas fragen. Dafür gibt es inputString.")
+code('antwort = inputString("Wie heißt du?")', 'print("Hallo", antwort)')
+sag("Gleich kommt ein Fenster. Tippe deinen Namen ein.")
+antwort = inputString("Wie heißt du?")
+print("Hallo", antwort)
+delay(1000)
+sag("Für ganze Zahlen gibt es inputInt. Damit kannst du gleich weiterarbeiten.")
+
+kapitel(6, "Entscheidungen mit if")
+sag("Mit if entscheidet das Programm etwas. Wenn die Bedingung stimmt, läuft der eingerückte Block darunter.")
+sag("Achte auf den Doppelpunkt am Ende und auf die Einrückung. Beides ist wichtig!")
+code('zahl = inputInt("Gib eine Zahl ein")', "if zahl > 10:", '    print("Die Zahl ist größer als 10")', "else:", '    print("Die Zahl ist 10 oder kleiner")')
+zahl = inputInt("Gib eine Zahl ein")
+if zahl > 10:
+    print("Die Zahl ist größer als 10")
+else:
+    print("Die Zahl ist 10 oder kleiner")
+delay(1000)
+sag("Zum Vergleichen gibt es diese Zeichen: == gleich, != ungleich, < kleiner, > größer, <= und >= .")
+sag("Vorsicht: Beim Vergleichen schreibst du zwei Gleichheitszeichen, beim Variablen füllen nur eines.")
+
+kapitel(7, "Schleifen")
+sag("Eine Schleife wiederholt Befehle. Die einfachste Schleife in TigerJython heißt repeat:")
+code("repeat 3:", '    print("Hallo")')
+repeat 3:
+    print("Hallo")
+delay(1000)
+sag("Die for-Schleife zählt dabei mit. range(3) bedeutet: 0, 1, 2.")
+code("for i in range(3):", "    print(i)")
+for i in range(3):
+    print(i)
+delay(1000)
+
+kapitel(8, "Zeichnen mit der Turtle")
+sag("Jetzt wird gezeichnet. Dafür gibt es die Schildkröte, englisch Turtle.")
+sag("Genau diese Zeile steht ganz oben in diesem Programm und holt alle Zeichenbefehle: from gturtle import *")
+sag("Mit makeTurtle() öffnest du das Zeichenfenster. Es erscheint jetzt.")
+makeTurtle()
+delay(1000)
+sag("Die wichtigsten Befehle sind forward, back, left und right. Hier ein Quadrat:")
+code("repeat 4:", "    forward(100)", "    right(90)")
+repeat 4:
+    forward(100)
+    right(90)
+delay(1000)
+sag("Mit setPenColor änderst du die Farbe und mit dot machst du einen Punkt:")
+code('setPenColor("red")', "dot(30)")
+setPenColor("red")
+dot(30)
+delay(1500)
+
+kapitel(9, "Eigene Befehle mit def")
+sag("Eine Funktion ist ein eigener Befehl, den du selbst erfindest. Mit def legst du ihn an, danach kannst du ihn beliebig oft benutzen.")
+code("def quadrat(seite):", "    repeat 4:", "        forward(seite)", "        right(90)")
+def quadrat(seite):
+    repeat 4:
+        forward(seite)
+        right(90)
+sag("Jetzt zeichne ich damit drei Quadrate verschiedener Größe:")
+clear()
+penUp()
+setPos(-100, -50)
+setHeading(0)
+penDown()
+code("quadrat(50)", "quadrat(100)", "quadrat(150)")
+setPenColor("blue")
+quadrat(50)
+setPenColor("green")
+quadrat(100)
+setPenColor("red")
+quadrat(150)
+delay(1500)
+
+kapitel(10, "Tipps zum Schluss")
+sag("Erstens: Fehler sind normal. Die Fehlermeldung nennt dir die Zeile, in der etwas nicht stimmt.")
+sag("Zweitens: Nach if, else, for, while und def steht immer ein Doppelpunkt.")
+sag("Drittens: Alles in einem Block muss gleich weit eingerückt sein.")
+sag("Viertens: Groß und Kleinschreibung zählt. print funktioniert, Print nicht.")
+sag("Fünftens: Ein Doppelkreuz startet einen Kommentar. Alles dahinter ignoriert TigerJython, du kannst dir also Notizen machen.")
+sag("Und zuletzt: Probiere aus! Ändere Zahlen in diesem Programm und starte es neu.")
+print("")
+sag("Viel Spaß beim Programmieren!")
