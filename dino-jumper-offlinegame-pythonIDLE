@@ -1,0 +1,187 @@
+import tkinter as tk
+import random
+
+
+WIDTH, HEIGHT = 800, 250
+GROUND_Y = 200          
+GRAVITY = 1
+JUMP_SPEED = -16
+FRAME_MS = 20           
+
+
+root = tk.Tk()
+root.title("Dino Jumper")
+root.resizable(False, False)
+canvas = tk.Canvas(root, width=WIDTH, height=HEIGHT, bg="white", highlightthickness=0)
+canvas.pack()
+
+
+mode = "ready"          
+dino_y = GROUND_Y       
+dino_vy = 0             
+duck_held = False
+obstacles = []          
+speed = 6
+frame = 0
+spawn_timer = 60
+score = 0
+high_score = 0
+
+
+def reset():
+    global mode, dino_y, dino_vy, obstacles, speed, frame, spawn_timer, score
+    mode = "playing"
+    dino_y = GROUND_Y
+    dino_vy = 0
+    obstacles = []
+    speed = 6
+    frame = 0
+    spawn_timer = 60
+    score = 0
+
+
+def on_ground():
+    return dino_y >= GROUND_Y
+
+
+def jump(event=None):
+    global dino_vy
+    if mode != "playing":
+        reset()                      
+        return
+    if on_ground() and not duck_held:
+        dino_vy = JUMP_SPEED
+
+
+def duck_down(event=None):
+    global duck_held
+    duck_held = True
+
+
+def duck_up(event=None):
+    global duck_held
+    duck_held = False
+
+
+def dino_box():
+    """Returns the rectangle (x1, y1, x2, y2) that the dino occupies."""
+    x = 60
+    if duck_held and on_ground():
+        return (x, dino_y - 28, x + 60, dino_y)    # ducking: wide and short
+    return (x, dino_y - 50, x + 40, dino_y)        # standing
+
+
+def spawn():
+    if random.random() < 0.3:
+        
+        obstacles.append([WIDTH, GROUND_Y - 65, 40, 30, "bird"])
+    else:
+        
+        h = random.randint(40, 60)
+        w = random.randint(20, 30)
+        obstacles.append([WIDTH, GROUND_Y - h, w, h, "cactus"])
+
+
+def overlap(a, b):
+    """Checks if two rectangles touch. A small padding makes the game fairer."""
+    pad = 5
+    return (a[0] + pad < b[2] - pad and a[2] - pad > b[0] + pad and
+            a[1] + pad < b[3] - pad and a[3] - pad > b[1] + pad)
+
+
+def update():
+    global dino_y, dino_vy, speed, frame, spawn_timer, score, high_score, mode
+
+    frame += 1
+
+    
+    dino_vy += GRAVITY
+    dino_y += dino_vy
+    if dino_y >= GROUND_Y:
+        dino_y = GROUND_Y
+        dino_vy = 0
+
+
+    for ob in obstacles:
+        ob[0] -= speed
+    obstacles[:] = [ob for ob in obstacles if ob[0] + ob[2] > 0]
+
+  
+    spawn_timer -= 1
+    if spawn_timer <= 0:
+        spawn()
+        spawn_timer = random.randint(50, 100)
+
+   
+    score = frame // 5
+    speed = min(6 + score // 150, 15)
+
+  
+    box = dino_box()
+    for ob in obstacles:
+        if overlap(box, (ob[0], ob[1], ob[0] + ob[2], ob[1] + ob[3])):
+            mode = "over"
+            high_score = max(high_score, score)
+            break
+
+
+def draw():
+    canvas.delete("all")
+
+  
+    canvas.create_line(0, GROUND_Y, WIDTH, GROUND_Y, width=2)
+
+  
+    x1, y1, x2, y2 = dino_box()
+    canvas.create_rectangle(x1, y1, x2, y2 - 12, fill="black", outline="black")
+    if duck_held and on_ground():
+        canvas.create_oval(x2 - 14, y1 + 6, x2 - 8, y1 + 12, fill="white", outline="white")
+    else:
+        canvas.create_oval(x2 - 14, y1 + 8, x2 - 8, y1 + 14, fill="white", outline="white")
+        # Legs alternate to look like running
+        foot = 0 if (frame // 6) % 2 == 0 else 4
+        canvas.create_rectangle(x1 + 8, y2 - 12, x1 + 14, y2 - foot, fill="black", outline="black")
+        canvas.create_rectangle(x1 + 22, y2 - 12, x1 + 28, y2 - (4 - foot), fill="black", outline="black")
+
+    
+    for ob in obstacles:
+        x, y, w, h, kind = ob
+        if kind == "cactus":
+            canvas.create_rectangle(x, y, x + w, y + h, fill="green", outline="darkgreen")
+        else:
+            canvas.create_oval(x, y, x + w, y + h, fill="gray", outline="gray")
+            flap = (frame // 8) % 2
+            canvas.create_line(x + w / 2, y + h / 2, x + w / 2 - 6, y - 6 if flap else y + h + 2, width=4)
+
+   
+    canvas.create_text(WIDTH - 20, 20, anchor="ne", text="HI {:05d}   {:05d}".format(high_score, score),
+                       font=("Courier", 16, "bold"))
+
+   
+    if mode == "ready":
+        canvas.create_text(WIDTH / 2, HEIGHT / 2 - 30, text="DINO JUMPER",
+                           font=("Courier", 24, "bold"))
+        canvas.create_text(WIDTH / 2, HEIGHT / 2 + 10, text="Press SPACE to start",
+                           font=("Courier", 14))
+    elif mode == "over":
+        canvas.create_text(WIDTH / 2, HEIGHT / 2 - 20, text="GAME OVER",
+                           font=("Courier", 24, "bold"), fill="red")
+        canvas.create_text(WIDTH / 2, HEIGHT / 2 + 15, text="Press SPACE to play again",
+                           font=("Courier", 14))
+
+
+def game_loop():
+    if mode == "playing":
+        update()
+    draw()
+    root.after(FRAME_MS, game_loop)
+
+
+root.bind("<space>", jump)
+root.bind("<Up>", jump)
+root.bind("<Down>", duck_down)
+root.bind("<KeyRelease-Down>", duck_up)
+
+root.focus_force()
+game_loop()
+root.mainloop()
