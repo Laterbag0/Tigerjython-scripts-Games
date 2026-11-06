@@ -1,0 +1,138 @@
+from gamegrid import *
+import random
+
+COLS, ROWS, MINES = 9, 9, 10
+CELL = 40
+
+mines    = [[False] * COLS for _ in range(ROWS)]
+revealed = [[False] * COLS for _ in range(ROWS)]
+flagged  = [[False] * COLS for _ in range(ROWS)]
+playing = True
+first_click = True
+
+makeGameGrid(COLS, ROWS, CELL, Color.white, False)
+setTitle("Minesweeper")
+show()
+
+NUM_FONT = Font("Arial", Font.BOLD, 18)
+
+def neighbors(x, y):
+    result = []
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            nx, ny = x + dx, y + dy
+            if (dx != 0 or dy != 0) and 0 <= nx < COLS and 0 <= ny < ROWS:
+                result.append((nx, ny))
+    return result
+
+def count_around(x, y):
+    return sum(1 for nx, ny in neighbors(x, y) if mines[ny][nx])
+
+def place_mines(safe_x, safe_y):
+    placed = 0
+    while placed < MINES:
+        x = random.randrange(COLS)
+        y = random.randrange(ROWS)
+        if (x, y) != (safe_x, safe_y) and not mines[y][x]:
+            mines[y][x] = True
+            placed += 1
+
+NUM_COLORS = {1: Color.blue, 2: Color.green, 3: Color.red, 4: Color.magenta,
+              5: Color.orange, 6: Color.cyan, 7: Color.black, 8: Color.gray}
+
+def draw_border(bg, x, y):
+    left = x * CELL
+    top = y * CELL
+    right = left + CELL - 1
+    bottom = top + CELL - 1
+    bg.setPaintColor(Color.darkGray)
+    bg.drawLine(left, top, right, top)
+    bg.drawLine(left, bottom, right, bottom)
+    bg.drawLine(left, top, left, bottom)
+    bg.drawLine(right, top, right, bottom)
+
+def draw_cell(x, y):
+    bg = getBg()
+    loc = Location(x, y)
+    left = x * CELL
+    top = y * CELL
+    bg.setFont(NUM_FONT)
+    if not revealed[y][x]:
+        bg.fillCell(loc, Color.gray)
+        if flagged[y][x]:
+            bg.setPaintColor(Color.red)
+            bg.drawText("F", Point(left + 13, top + 28))
+    elif mines[y][x]:
+        bg.fillCell(loc, Color.red)
+    else:
+        bg.fillCell(loc, Color.white)
+        n = count_around(x, y)
+        if n > 0:
+            bg.setPaintColor(NUM_COLORS[n])
+            bg.drawText(str(n), Point(left + 13, top + 28))
+    draw_border(bg, x, y)
+
+def draw_board():
+    for y in range(ROWS):
+        for x in range(COLS):
+            draw_cell(x, y)
+    refresh()
+
+draw_board()
+
+def reveal(x, y):
+    if revealed[y][x] or flagged[y][x]:
+        return
+    revealed[y][x] = True
+    draw_cell(x, y)
+    if count_around(x, y) == 0:
+        for nx, ny in neighbors(x, y):
+            reveal(nx, ny)
+
+def reveal_all():
+    for y in range(ROWS):
+        for x in range(COLS):
+            revealed[y][x] = True
+    draw_board()
+
+def check_win():
+    return all(revealed[y][x] or mines[y][x]
+               for y in range(ROWS) for x in range(COLS))
+
+def on_click(x, y):
+    global playing, first_click
+    if not playing or revealed[y][x] or flagged[y][x]:
+        return
+    if first_click:
+        place_mines(x, y)
+        first_click = False
+    if mines[y][x]:
+        playing = False
+        reveal_all()
+        setTitle("welcome to bosnia my friend")
+        return
+    reveal(x, y)
+    refresh()
+    if check_win():
+        playing = False
+        setTitle("you survived bosnia simulator")
+
+def mouse_handler(mouse):
+    loc = toLocationInGrid(mouse.getX(), mouse.getY())
+    on_click(loc.x, loc.y)
+    return True
+
+def right_click_handler(mouse):
+    if not playing:
+        return True
+    loc = toLocationInGrid(mouse.getX(), mouse.getY())
+    x, y = loc.x, loc.y
+    if revealed[y][x]:
+        return True
+    flagged[y][x] = not flagged[y][x]
+    draw_board()
+    return True
+
+addMouseListener(mouse_handler, GGMouse.lPress)
+addMouseListener(right_click_handler, GGMouse.rPress)
+doRun()
